@@ -237,8 +237,52 @@ def download_admin_file(
         }
     )
 
-# REMOVED: download_minio_file endpoint
-# This endpoint is redundant with the existing /api/admin/files/{file_id}/download endpoint.
-# The file_id approach is more secure and provides better access control.
-# For orphaned files (exist in MinIO but not in database), admins can use the 
-# /api/admin/files/minio endpoint to list them and then handle them appropriately. 
+@router.get("/minio/{file_path:path}", operation_id="admin_files_download_minio_file")
+def download_minio_file(
+    file_path: str,
+    current_user: models.User = Depends(get_admin_access)
+):
+    """
+    Download an orphaned file directly from MinIO (Admin only).
+    
+    This is for files that exist in MinIO but not in the database.
+    These are typically files that were uploaded but never properly recorded,
+    or files left behind after database cleanup.
+    
+    Security features:
+    - Requires admin authentication
+    - Streams file directly without exposing MinIO credentials
+    - Provides audit trail through API logs
+    """
+    # Download file from MinIO
+    success, file_data = minio_service.download_file(file_path)
+    
+    if not success or not file_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found in storage"
+        )
+    
+    # Create streaming response
+    def generate():
+        try:
+            file_data.seek(0)  # Ensure we're at the beginning
+            while True:
+                chunk = file_data.read(8192)  # Read in 8KB chunks
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            file_data.close()
+    
+    # Extract filename from path
+    filename = file_path.split('/')[-1] if '/' in file_path else file_path
+    
+    # Return streaming response with appropriate headers
+    return StreamingResponse(
+        generate(),
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    ) 

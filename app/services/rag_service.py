@@ -151,7 +151,62 @@ class RagChatService:
             embedding_url=embedding_url or settings.REMOTE_EMBEDDER_URL,
             milvus_uri=self.milvus_uri
         )
+    
+    def _is_global_collection(self, db: Session, collection_name: str) -> bool:
+        """
+        Check if a collection is the global/predefined collection.
         
+        Args:
+            db: Database session
+            collection_name: Name of the collection to check
+            
+        Returns:
+            True if collection is the global collection, False otherwise
+        """
+        try:
+            # Handle None case
+            if collection_name is None:
+                return False
+                
+            from app.services.rag_config_service import RAGConfigService
+            predefined_collection = RAGConfigService.get_predefined_collection(db)
+            
+            # Check if collection name matches the predefined collection
+            # Handle both direct name match and admin-prefixed names
+            return (collection_name == predefined_collection or 
+                    collection_name == f"admin_{predefined_collection}" or
+                    collection_name.replace("admin_", "") == predefined_collection)
+        except Exception as e:
+            print(f"DEBUG: Error checking if collection is global: {str(e)}")
+            return False
+    
+    def _get_rag_system_prompt(self, db: Session, collection_name: str = None) -> str:
+        """
+        Get the appropriate RAG system prompt based on collection type.
+        
+        Args:
+            db: Database session
+            collection_name: Name of the collection (optional)
+            
+        Returns:
+            Appropriate system prompt for the collection type
+        """
+        try:
+            from app.config import settings
+            from app.services.rag_config_service import RAGConfigService
+            
+            # If collection is specified and it's a global collection, use global prompt
+            if collection_name and self._is_global_collection(db, collection_name):
+                print(f"DEBUG: Using global collection RAG prompt for collection: {collection_name}")
+                return RAGConfigService.get_global_collection_rag_prompt(db)
+            else:
+                # Use user collection prompt (current default behavior)
+                print(f"DEBUG: Using user collection RAG prompt for collection: {collection_name}")
+                return getattr(settings, 'RAG_SYSTEM_PROMPT', DEFAULT_RAG_SYSTEM_PROMPT)
+        except Exception as e:
+            print(f"DEBUG: Error getting RAG system prompt, falling back to default: {str(e)}")
+            return DEFAULT_RAG_SYSTEM_PROMPT
+
     def get_llm(self, db: Session, streaming: bool = False, override_thinking: Optional[bool] = None):
         """Get a configured LLM instance."""
         # Get the LLM config from the database (there's only one)
@@ -212,7 +267,7 @@ class RagChatService:
         # Return configured LLM
         return ChatOpenAI(**model_params)
     
-    def create_rag_chain(self, llm, retriever, db: Session):
+    def create_rag_chain(self, llm, retriever, db: Session, collection_name: str = None):
         """Create a RAG chain with the specified LLM and retriever, using PostgreSQL for chat history."""
         contextualize_q_system_prompt = (
             "Berdasarkan riwayat chat dan pertanyaan terakhir pengguna "
@@ -228,13 +283,9 @@ class RagChatService:
         ])
         history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
 
-        system_prompt = (
-            "You are a helpful AI assistant. Answer the user's question based on the provided context. "
-            "If the answer isn't in the context, politely say you don't know rather than making up an answer. "
-            "Be concise, accurate, and helpful in your response."
-            "\n\n"
-            "Context: {context}"
-        )
+        # Get appropriate system prompt based on collection type
+        base_system_prompt = self._get_rag_system_prompt(db, collection_name)
+        system_prompt = f"{base_system_prompt}\n\nContext: {{context}}"
 
         qa_prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
@@ -288,12 +339,15 @@ class RagChatService:
             print(f"DEBUG: Created LLM with model {llm.model_name}")
             
             print(f"DEBUG: Creating retriever for collection {collection_name}")
-            retriever = self.vectorstore_manager.get_retriever(collection_name)
-            print(f"DEBUG: Successfully created retriever")
+            # Use admin-configurable top_k value
+            from app.services.rag_config_service import RAGConfigService
+            top_k = RAGConfigService.get_retriever_top_k(db)
+            retriever = self.vectorstore_manager.get_retriever(collection_name, top_k=top_k)
+            print(f"DEBUG: Successfully created retriever with top_k={top_k}")
             
             # Create the RAG chain
             print(f"DEBUG: Creating RAG chain")
-            rag_chain = self.create_rag_chain(llm, retriever, db)
+            rag_chain = self.create_rag_chain(llm, retriever, db, collection_name)
             print(f"DEBUG: Successfully created RAG chain")
             
             # Add message history integration
@@ -351,8 +405,10 @@ class RagChatService:
             # Create custom history for this conversation
             history = CustomMessageHistory(conversation_id, db)
             
-            # Create retriever
-            retriever = self.vectorstore_manager.get_retriever(collection_name)
+            # Create retriever with admin-configurable top_k value
+            from app.services.rag_config_service import RAGConfigService
+            top_k = RAGConfigService.get_retriever_top_k(db)
+            retriever = self.vectorstore_manager.get_retriever(collection_name, top_k=top_k)
             
             # Create the contextualize question chain
             contextualize_q_system_prompt = (
@@ -391,14 +447,9 @@ class RagChatService:
             context = "\n\n".join(context_texts)
             print(f"DEBUG: Created context with {len(context)} characters from {len(relevant_docs)} documents")
             
-            # Create streaming QA chain
-            qa_system_prompt = (
-                "You are a helpful AI assistant. Answer the user's question based on the provided context. "
-                "If the answer isn't in the context, politely say you don't know rather than making up an answer. "
-                "Be concise, accurate, and helpful in your response."
-                "\n\n"
-                "Context: {context}"
-            )
+            # Create streaming QA chain with appropriate prompt based on collection type
+            base_system_prompt = self._get_rag_system_prompt(db, collection_name)
+            qa_system_prompt = f"{base_system_prompt}\n\nContext: {{context}}"
             
             qa_prompt = ChatPromptTemplate.from_messages([
                 ("system", qa_system_prompt),
@@ -467,8 +518,10 @@ class RagChatService:
             # Create custom history for this conversation
             history = CustomMessageHistory(conversation_id, db)
 
-            # Create retriever
-            retriever = self.vectorstore_manager.get_retriever(collection_name)
+            # Create retriever with admin-configurable top_k value
+            from app.services.rag_config_service import RAGConfigService
+            top_k = RAGConfigService.get_retriever_top_k(db)
+            retriever = self.vectorstore_manager.get_retriever(collection_name, top_k=top_k)
 
             # Create the contextualize question chain
             contextualize_q_system_prompt = (
@@ -505,14 +558,9 @@ class RagChatService:
             context = "\n\n".join(context_texts)
             print(f"DEBUG: Created context with {len(context)} characters from {len(relevant_docs)} documents")
 
-            # Create QA chain (non-streaming)
-            qa_system_prompt = (
-                "You are a helpful AI assistant. Answer the user's question based on the provided context. "
-                "If the answer isn't in the context, politely say you don't know rather than making up an answer. "
-                "Be concise, accurate, and helpful in your response."
-                "\n\n"
-                "Context: {context}"
-            )
+            # Create QA chain (non-streaming) with appropriate prompt based on collection type
+            base_system_prompt = self._get_rag_system_prompt(db, collection_name)
+            qa_system_prompt = f"{base_system_prompt}\n\nContext: {{context}}"
             qa_prompt = ChatPromptTemplate.from_messages([
                 ("system", qa_system_prompt),
                 MessagesPlaceholder(variable_name="chat_history"),
@@ -597,8 +645,8 @@ class RagChatService:
             llm = self.get_llm(db)
             print(f"DEBUG: Created LLM with model {llm.model_name}")
             
-            # Get system prompt from settings or use default
-            system_prompt = getattr(settings, 'RAG_SYSTEM_PROMPT', DEFAULT_RAG_SYSTEM_PROMPT)
+            # Get appropriate system prompt based on collection type
+            system_prompt = self._get_rag_system_prompt(db, conversation_collection)
             
             # Create prompt
             prompt = ChatPromptTemplate.from_messages([
@@ -616,8 +664,10 @@ class RagChatService:
                 print(f"DEBUG: Using provided collection name: {conversation_collection}")
                 
                 try:
-                    # Get retriever for this collection - use a safe top_k value (4 is typically safe with Milvus)
-                    top_k = 4  # Use a fixed safe value instead of admin_config to avoid the limit error
+                    # Get retriever for this collection - use admin-configurable top_k value
+                    from app.services.rag_config_service import RAGConfigService
+                    top_k = RAGConfigService.get_retriever_top_k(db)
+                    print(f"DEBUG: Using admin-configured top_k value: {top_k}")
                     retriever = self.vectorstore_manager.get_retriever(
                         collection_name=conversation_collection,
                         top_k=top_k
@@ -806,11 +856,10 @@ class RagChatService:
             context_parts = [self._extract_doc_text(doc) for doc in docs]
             context = "\n\n".join(context_parts)
             
-            # Create prompt
+            # Create prompt with appropriate system prompt based on collection type
+            base_system_prompt = self._get_rag_system_prompt(db, safe_collection_name)
             prompt = ChatPromptTemplate.from_messages([
-                ("system", "You are a helpful assistant that answers questions based on the provided context. "
-                           "If you don't know the answer based on the context, say you don't know. "
-                           "Do not make up information. Always cite the document source when referring to specific information."),
+                ("system", f"{base_system_prompt} Always cite the document source when referring to specific information."),
                 ("system", "Context information is below.\n{context}"),
                 ("system", "Previous conversation history:\n{chat_history}"),
                 ("human", "{input}")

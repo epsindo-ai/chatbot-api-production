@@ -334,4 +334,35 @@ class AdminConfigService:
             db,
             AdminConfig.KEY_RETRIEVER_TOP_K,
             settings.RETRIEVER_TOP_K
-        ) 
+        )
+    
+    @staticmethod
+    def set_global_collection_rag_prompt(db: Session, prompt: str) -> AdminConfig:
+        """Set the RAG system prompt for global collections."""
+        return AdminConfigService.set_config(
+            db, 
+            AdminConfig.KEY_GLOBAL_COLLECTION_RAG_PROMPT, 
+            prompt, 
+            "System prompt for global collection RAG operations",
+            "rag",
+            "string"
+        )
+        
+    @staticmethod
+    def get_global_collection_rag_prompt(db: Session) -> str:
+        """
+        Get the RAG system prompt for global collections from admin configuration.
+        Falls back to DEFAULT_RAG_SYSTEM_PROMPT if not configured.
+        
+        Args:
+            db: Database session
+            
+        Returns:
+            Global collection RAG system prompt as string
+        """
+        from app.services.rag_service import DEFAULT_RAG_SYSTEM_PROMPT
+        return AdminConfigService.get_config(
+            db,
+            AdminConfig.KEY_GLOBAL_COLLECTION_RAG_PROMPT,
+            DEFAULT_RAG_SYSTEM_PROMPT  # Default fallback
+        )

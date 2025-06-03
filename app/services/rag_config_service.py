@@ -39,6 +39,33 @@ class RAGConfigService:
         )
     
     @staticmethod
+    def get_global_collection_rag_prompt(db: Session) -> str:
+        """
+        Get the RAG system prompt for global collections.
+        
+        Args:
+            db: Database session
+            
+        Returns:
+            Global collection RAG system prompt
+        """
+        return AdminConfigService.get_global_collection_rag_prompt(db)
+    
+    @staticmethod
+    def set_global_collection_rag_prompt(db: Session, prompt: str) -> AdminConfig:
+        """
+        Set the RAG system prompt for global collections.
+        
+        Args:
+            db: Database session
+            prompt: The system prompt to set
+            
+        Returns:
+            AdminConfig object
+        """
+        return AdminConfigService.set_global_collection_rag_prompt(db, prompt)
+    
+    @staticmethod
     def get_rag_config(db: Session) -> Dict[str, Any]:
         """
         Get all RAG-related configuration parameters.
@@ -52,6 +79,7 @@ class RAGConfigService:
         return {
             "predefined_collection": RAGConfigService.get_predefined_collection(db),
             "retriever_top_k": RAGConfigService.get_retriever_top_k(db),
+            "global_collection_rag_prompt": RAGConfigService.get_global_collection_rag_prompt(db),
             "allow_user_uploads": AdminConfigService.get_config(
                 db,
                 AdminConfig.KEY_ALLOW_USER_UPLOADS,
@@ -72,6 +100,7 @@ class RAGConfigService:
         """
         return {
             "predefinedCollection": RAGConfigService.get_predefined_collection(db),
+            "globalCollectionRagPrompt": RAGConfigService.get_global_collection_rag_prompt(db),
             "allowUserUploads": AdminConfigService.get_config(
                 db,
                 AdminConfig.KEY_ALLOW_USER_UPLOADS,
@@ -82,4 +111,4 @@ class RAGConfigService:
                 AdminConfig.KEY_MAX_FILE_SIZE_MB,
                 10
             )
-        } 
+        }
