@@ -97,6 +97,56 @@ def update_conversation(db: Session, conversation_id: str, meta_data: dict = Non
         db.refresh(db_conversation)
     return db_conversation
 
+def delete_conversation(db: Session, conversation_id: str):
+    """
+    Delete a conversation and all associated data.
+    
+    This will:
+    1. Delete the conversation from database (cascade deletes messages and files automatically)
+    2. Clean up user collection vectors from Milvus (but preserve global collections)
+    
+    Args:
+        db: Database session
+        conversation_id: ID of conversation to delete
+    
+    Returns:
+        bool: True if deletion was successful, False if conversation not found
+    """
+    db_conversation = db.query(models.Conversation).filter(models.Conversation.id == conversation_id).first()
+    if not db_conversation:
+        return False
+    
+    # Store info before deletion for cleanup
+    conversation_type = db_conversation.conversation_type
+    
+    try:
+        # Clean up user collection vectors from Milvus if this is a user files conversation
+        if conversation_type == models.ConversationType.USER_FILES:
+            try:
+                from app.utils.string_utils import sanitize_collection_name, conversation_collection_name
+                from app.services.ingestion_service import DocumentIngestionService
+                
+                collection_name = conversation_collection_name(conversation_id)
+                safe_collection_name = sanitize_collection_name(collection_name)
+                
+                # Delete the user collection from Milvus
+                ingestion_service = DocumentIngestionService()
+                ingestion_service.delete_collection(safe_collection_name)
+                print(f"Deleted user collection from Milvus: {safe_collection_name}")
+            except Exception as e:
+                print(f"Warning: Could not delete user collection from Milvus: {str(e)}")
+                # Continue with database deletion even if Milvus cleanup fails
+        
+        # Delete conversation from database (cascade deletes messages and files automatically)
+        db.delete(db_conversation)
+        db.commit()
+        return True
+        
+    except Exception as e:
+        print(f"Error deleting conversation {conversation_id}: {str(e)}")
+        db.rollback()
+        return False
+
 # Message CRUD operations
 def get_conversation_messages(db: Session, conversation_id: str, skip: int = 0, limit: int = 100):
     return db.query(models.Message).filter(
@@ -728,4 +778,4 @@ def update_conversation_to_current_global_collection(db: Session, conversation_i
     conversation.original_global_collection_name = current_collection.name
     db.commit()
     db.refresh(conversation)
-    return conversation 
+    return conversation

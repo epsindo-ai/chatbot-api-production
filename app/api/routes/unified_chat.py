@@ -954,6 +954,63 @@ async def get_conversation_with_files(
     
     return response_dict
 
+@router.delete("/conversations/{conversation_id}", response_model=Dict[str, Any])
+async def delete_conversation(
+    conversation_id: str,
+    current_user: schemas.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a conversation and all its associated data.
+    
+    This will:
+    1. Delete the conversation from the database (cascade deletes messages and files automatically)
+    2. Clean up user collection vectors from Milvus (but preserve global collections)
+    3. Remove files from MinIO storage
+    
+    Users can only delete their own conversations.
+    Admin users can delete any conversation.
+    """
+    # Check if conversation exists
+    conversation = crud.get_conversation(db, conversation_id)
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation {conversation_id} not found"
+        )
+    
+    # Check permission - users can only delete their own conversations, admins can delete any
+    if conversation.user_id != current_user.id and current_user.role != models.UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to delete this conversation"
+        )
+    
+    # Store conversation info for response
+    conversation_type = conversation.conversation_type
+    user_id = conversation.user_id
+    
+    # Get files for cleanup info before deletion
+    files = crud.get_conversation_files(db, conversation_id)
+    file_count = len(files) if files else 0
+    
+    # Delete the conversation using the CRUD function
+    success = crud.delete_conversation(db, conversation_id)
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete conversation"
+        )
+    
+    return {
+        "detail": "Conversation deleted successfully",
+        "conversation_id": conversation_id,
+        "conversation_type": conversation_type.value if conversation_type else "regular",
+        "deleted_files_count": file_count,
+        "user_id": user_id
+    }
+
 @router.post("/conversations/{conversation_id}/generate-headline", response_model=schemas.Conversation)
 async def generate_headline(
     conversation_id: str,
