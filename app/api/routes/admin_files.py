@@ -176,7 +176,12 @@ async def delete_file(
         minio_service.delete_file(file.file_path)
     
     # Delete from database
-    crud.delete_file(db, file_id)
+    success = crud.delete_file_storage(db, file_id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete file from database"
+        )
     
     return {"detail": "File deleted successfully"}
 
