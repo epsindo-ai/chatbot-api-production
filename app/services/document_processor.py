@@ -30,7 +30,7 @@ class DoclingProcessor:
     
     def __init__(self, 
                  parser_artifact_path: str = "/root/.cache/docling/models",
-                 embed_model_id: str = "app/stella-embed-tokenizer",
+                 embed_model_id: str = "/app/stella-embed-tokenizer",  # Use local path
                  use_gpu: bool = True):
         """
         Initialize the Docling processor.
@@ -44,10 +44,58 @@ class DoclingProcessor:
         self.parser_artifact_path = parser_artifact_path
         self.embed_model_id = embed_model_id
         
-        # Always force CPU mode regardless of input parameter
-        # This is to avoid CUDA issues in containers without GPU
-        self.use_gpu = False
-        logger.info("Forcing CPU mode for document processing regardless of input parameter")
+        # Prioritize GPU usage with fallback to CPU
+        self.use_gpu = use_gpu
+        
+        # Set environment variables for GPU usage before any model loading
+        if self.use_gpu:
+            os.environ['CUDA_VISIBLE_DEVICES'] = '0'  # Make sure GPU 0 is visible
+            os.environ['TORCH_USE_CUDA_DSA'] = '1'    # Enable CUDA device-side assertions
+        
+        # Check GPU availability with detailed logging
+        gpu_available = False
+        if self.use_gpu:
+            logger.info("Checking GPU availability...")
+            try:
+                import torch
+                logger.info(f"PyTorch version: {torch.__version__}")
+                gpu_available = torch.cuda.is_available()
+                logger.info(f"torch.cuda.is_available(): {gpu_available}")
+                
+                if gpu_available:
+                    # Set default GPU device
+                    torch.cuda.set_device(0)
+                    gpu_count = torch.cuda.device_count()
+                    current_device = torch.cuda.current_device()
+                    gpu_name = torch.cuda.get_device_name(current_device)
+                    logger.info(f"GPU detected: {gpu_name} (Device {current_device}/{gpu_count})")
+                    logger.info(f"CUDA version: {torch.version.cuda}")
+                    
+                    # Test GPU memory
+                    gpu_memory = torch.cuda.get_device_properties(current_device).total_memory
+                    logger.info(f"GPU memory: {gpu_memory / 1024**3:.1f} GB")
+                    
+                    # Test basic GPU operation
+                    test_tensor = torch.tensor([1.0]).cuda()
+                    logger.info(f"GPU test tensor device: {test_tensor.device}")
+                else:
+                    logger.warning("CUDA not available, falling back to CPU")
+            except ImportError as e:
+                logger.warning(f"PyTorch not available: {e}, falling back to CPU")
+            except Exception as e:
+                logger.warning(f"GPU check failed: {e}, falling back to CPU")
+        else:
+            logger.info("GPU usage disabled by parameter")
+        
+        # Set device based on availability and preference
+        if self.use_gpu and gpu_available:
+            # Use AUTO to let Docling automatically select the best device
+            self.device = AcceleratorDevice.AUTO
+            logger.info("✓ CONFIGURED TO USE AUTO DEVICE SELECTION (GPU PREFERRED)")
+        else:
+            self.device = AcceleratorDevice.CPU
+            logger.info("✓ CONFIGURED TO USE CPU PROCESSING")
+            
         logger.info(f"Parser artifact path: {parser_artifact_path}")
         logger.info(f"Embedding model ID: {embed_model_id}")
         
@@ -60,8 +108,11 @@ class DoclingProcessor:
             except Exception as e:
                 logger.error(f"Failed to create parser artifact directory: {e}")
         
-        # Set up PDF pipeline options with explicit CPU settings
+        # Set up PDF pipeline options with GPU/CPU settings based on availability
         logger.info("Setting up PDF pipeline options")
+        logger.info(f"Device configuration: {self.device}")
+        logger.info(f"Device value: {self.device.value}")
+        
         self.pdf_pipeline_options = PdfPipelineOptions(
             artifacts_path=self.parser_artifact_path,
             do_ocr=True,
@@ -72,11 +123,15 @@ class DoclingProcessor:
                 mode=TableFormerMode.ACCURATE
             ),
             accelerator_options=AcceleratorOptions(
-                device=AcceleratorDevice.CPU,  # Force CPU
+                device=self.device,
             )
         )
         
-        logger.info(f"Using accelerator device: CPU")
+        logger.info(f"✓ PDF Pipeline configured with accelerator device: {self.device.value}")
+        
+        # Log the accelerator options to verify
+        logger.info(f"Accelerator options device: {self.pdf_pipeline_options.accelerator_options.device}")
+        logger.info(f"Accelerator options device value: {self.pdf_pipeline_options.accelerator_options.device.value}")
         
         # Create document converter with format options
         logger.info("Creating document converter")
@@ -125,7 +180,7 @@ class DoclingProcessor:
             logger.info("STEP 1: Creating DoclingLoader")
             loader_start = time.time()
             try:
-                # Use explicit CPU configuration
+                # Use dynamic device configuration
                 loader = DoclingLoader(
                     file_path=valid_paths,
                     converter=self.doc_converter,

@@ -46,7 +46,7 @@ class DocumentIngestionService:
             self.document_processor = DoclingProcessor(
                 parser_artifact_path=settings.DOCLING_PARSER_PATH,
                 embed_model_id=settings.DOCLING_EMBED_MODEL,
-                use_gpu=False  # Force CPU mode
+                use_gpu=True  # Enable GPU acceleration
             )
             logger.info("Document processor initialized successfully")
         except Exception as e:
