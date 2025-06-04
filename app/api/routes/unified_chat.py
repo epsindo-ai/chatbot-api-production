@@ -304,6 +304,14 @@ async def unified_chat(
         if using_collection:
             print(f"DEBUG: Processing RAG request with admin collection {collection_name}")
             
+            # Save the user message first
+            user_message = schemas.MessageCreate(
+                conversation_id=conversation_id,
+                role="user",
+                content=request.message
+            )
+            crud.create_message(db, user_message)
+            
             # Get response from RAG service
             response = await rag_service.get_rag_response(
                 db=db,
@@ -541,7 +549,8 @@ async def unified_stream_chat(
                 generate_error_stream("The linked global collection was not found."),
                 media_type="application/x-ndjson"
             )
-        collection_name = collection.name
+        # Add admin prefix for global collections since they're stored with admin prefix in Milvus
+        collection_name = f"admin_{collection.name}"
     
     # Regular conversation with user's own files
     elif conversation and conversation.conversation_type == models.ConversationType.USER_FILES:
@@ -1896,12 +1905,13 @@ async def initiate_with_global_collection(
                 milvus_uri=settings.MILVUS_URI
             )
             
-            safe_collection_name = sanitize_collection_name(collection_name)
+            # Global collections are admin collections and have admin_ prefix in Milvus
+            safe_collection_name = sanitize_collection_name(f"admin_{collection_name}")
             collection_exists = vector_store_manager.collection_exists(safe_collection_name)
-            print(f"DEBUG: Checking if collection exists in Milvus: '{safe_collection_name}' -> {collection_exists}")
+            print(f"DEBUG: Checking if global collection exists in Milvus: '{safe_collection_name}' -> {collection_exists}")
             
             if not collection_exists:
-                print(f"DEBUG: WARNING - Collection '{safe_collection_name}' not found in Milvus. This may cause issues when chatting.")
+                print(f"DEBUG: WARNING - Global collection '{safe_collection_name}' not found in Milvus. This may cause issues when chatting.")
         except Exception as e:
             print(f"DEBUG: Error checking Milvus collection: {str(e)}")
             # Continue anyway as we can still create the conversation
@@ -1922,7 +1932,7 @@ async def initiate_with_global_collection(
             
             return schemas.ConversationInitiateResponse(
                 conversation_id=conversation.id,
-                expires_at=None  # These don't expire by default
+                expires_at=conversation.expires_at  # Return the actual expiration time
             )
         except Exception as e:
             print(f"DEBUG: Error creating conversation: {str(e)}")
@@ -1956,7 +1966,7 @@ async def initiate_for_files(
         conversation = crud.create_conversation_for_user_files(db=db, user_id=current_user.id)
         return schemas.ConversationInitiateResponse(
             conversation_id=conversation.id,
-            expires_at=None  # These don't expire by default
+            expires_at=conversation.expires_at  # Return the actual expiration time
         )
     except Exception as e:
         # Log the exception e

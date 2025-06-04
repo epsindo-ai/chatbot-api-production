@@ -684,15 +684,19 @@ def create_conversation_with_global_collection(db: Session, user_id: int, meta_d
                 print(f"DEBUG: Collection '{collection_name}' not found in database")
                 return None  # Collection not found
         
-        # Create conversation with link to the collection
-        print(f"DEBUG: Creating conversation with linked_global_collection_id={collection.id}")
+        # Create conversation with link to the collection and 24-hour expiration
+        from datetime import datetime, timedelta
+        expires_at_datetime = datetime.utcnow() + timedelta(hours=24)
+        print(f"DEBUG: Creating conversation with linked_global_collection_id={collection.id}, expires_at={expires_at_datetime}")
         db_conversation = models.Conversation(
             id=str(uuid.uuid4()),
             user_id=user_id,
             meta_data=meta_data,
             conversation_type=models.ConversationType.GLOBAL_COLLECTION,
             linked_global_collection_id=collection.id,
-            original_global_collection_name=collection.name
+            original_global_collection_name=collection.name,
+            is_empty=True,  # Global collection conversations start empty
+            expires_at=expires_at_datetime  # Expire in 24 hours if no messages are added
         )
         db.add(db_conversation)
         db.commit()
@@ -708,12 +712,17 @@ def create_conversation_with_global_collection(db: Session, user_id: int, meta_d
         return None
 
 def create_conversation_for_user_files(db: Session, user_id: int, meta_data: dict = None):
-    """Create a new conversation specifically for user-uploaded files."""
+    """Create a new conversation specifically for user-uploaded files with 24-hour expiration."""
+    from datetime import datetime, timedelta
+    expires_at_datetime = datetime.utcnow() + timedelta(hours=24)
+    
     db_conversation = models.Conversation(
         id=str(uuid.uuid4()),
         user_id=user_id,
         meta_data=meta_data,
-        conversation_type=models.ConversationType.USER_FILES
+        conversation_type=models.ConversationType.USER_FILES,
+        is_empty=True,  # User file conversations start empty
+        expires_at=expires_at_datetime  # Expire in 24 hours if no messages are added
     )
     db.add(db_conversation)
     db.commit()

@@ -200,7 +200,7 @@ class StreamingChatResponse(BaseModel):
 # New schema for initiate conversation response
 class ConversationInitiateResponse(BaseModel):
     conversation_id: str
-    expires_at: datetime
+    expires_at: Optional[datetime] = None
 
 # RAG-specific schemas
 class RagChatRequest(BaseModel):

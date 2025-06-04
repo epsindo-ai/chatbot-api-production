@@ -26,6 +26,7 @@ from app.db import crud, models, schemas
 from app.db.database import get_db
 from app.config import settings
 from app.services.message_history import CustomMessageHistory
+from app.services.rag_config_service import RAGConfigService
 from app.utils.embeddings import RemoteEmbedder
 from app.utils.infinity_embedder import InfinityEmbedder
 from app.utils.string_utils import sanitize_collection_name, conversation_collection_name
@@ -843,10 +844,11 @@ class RagChatService:
                 connection_args={"uri": self.milvus_uri}
             )
             
-            # Create retriever
+            # Create retriever with admin-configured top_k value
+            top_k = RAGConfigService.get_retriever_top_k(db)
             retriever = vectorstore.as_retriever(
                 search_type="similarity",
-                search_kwargs={"k": 5}
+                search_kwargs={"k": top_k}
             )
             
             # Get relevant documents using LangChain's native async method
