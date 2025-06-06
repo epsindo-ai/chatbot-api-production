@@ -7,7 +7,7 @@ from langchain_core.documents import Document
 
 from langchain_docling.loader import ExportType
 from langchain_docling import DoclingLoader
-from docling.document_converter import DocumentConverter, PdfFormatOption, WordFormatOption, MarkdownFormatOption, CsvFormatOption
+from docling.document_converter import DocumentConverter, PdfFormatOption, WordFormatOption, MarkdownFormatOption, CsvFormatOption, HTMLFormatOption, PowerpointFormatOption, ExcelFormatOption, AsciiDocFormatOption
 from docling.datamodel.base_models import InputFormat
 from docling.chunking import HybridChunker
 from docling.datamodel.pipeline_options import (
@@ -140,11 +140,16 @@ class DoclingProcessor:
                 format_options={
                     InputFormat.PDF: PdfFormatOption(pipeline_options=self.pdf_pipeline_options),
                     InputFormat.DOCX: WordFormatOption(),
+                    InputFormat.XLSX: ExcelFormatOption(),
+                    InputFormat.PPTX: PowerpointFormatOption(),
                     InputFormat.MD: MarkdownFormatOption(),
-                    InputFormat.CSV: CsvFormatOption()
+                    InputFormat.CSV: CsvFormatOption(),
+                    InputFormat.HTML: HTMLFormatOption(),
+                    InputFormat.ASCIIDOC: AsciiDocFormatOption()
                 }
             )
             logger.info("Document converter created successfully")
+            logger.info("✓ Supported formats: PDF, DOCX, XLSX, PPTX, Markdown, CSV, HTML, AsciiDoc")
         except Exception as e:
             logger.error(f"Failed to create document converter: {e}", exc_info=True)
             raise
@@ -199,7 +204,8 @@ class DoclingProcessor:
             try:
                 logger.info("Starting document loading and parsing")
                 docs = loader.load()
-                logger.info(f"Document parsing completed in {time.time() - parse_start:.2f} seconds")
+                parse_time = time.time() - parse_start
+                logger.info(f"Document parsing completed in {parse_time:.2f} seconds")
                 
                 if docs:
                     logger.info(f"Successfully processed {len(docs)} document chunks")
@@ -208,7 +214,29 @@ class DoclingProcessor:
                     logger.info(f"Metadata keys: {list(docs[0].metadata.keys())}")
                 else:
                     logger.warning("No document chunks were produced by Docling")
-                    return []
+                    
+                    # Try to extract raw text as fallback for minimal content files
+                    logger.info("Attempting fallback: extracting raw text from document")
+                    try:
+                        # Get the document conversion result to extract text
+                        conv_result = self.doc_converter.convert(valid_paths[0])
+                        raw_text = conv_result.document.export_to_markdown().strip()
+                        
+                        if raw_text and len(raw_text) > 10:  # Minimum content threshold
+                            logger.info(f"Fallback successful: extracted {len(raw_text)} characters of raw text")
+                            # Create a basic document with the raw text
+                            fallback_doc = Document(
+                                page_content=raw_text,
+                                metadata=metadata or {}
+                            )
+                            docs = [fallback_doc]
+                            logger.info("Created fallback document from raw text")
+                        else:
+                            logger.warning(f"Fallback failed: raw text too short ({len(raw_text)} chars)")
+                            return []
+                    except Exception as fallback_error:
+                        logger.error(f"Fallback text extraction failed: {fallback_error}")
+                        return []
             except Exception as e:
                 logger.error(f"Failed during document parsing: {e}", exc_info=True)
                 logger.error("Docling parsing failed - no fallback mechanism will be used")
@@ -259,7 +287,11 @@ class DoclingProcessor:
             file_paths = []
             for idx, (file_content, file_name, mime_type) in enumerate(file_objects):
                 logger.info(f"Processing file {idx+1}/{len(file_objects)}: {file_name} ({mime_type})")
+                
+                # Preserve the original filename with extension for Docling format detection
                 file_path = os.path.join(temp_dir, file_name)
+                logger.info(f"Saving file with original filename: {file_path}")
+                
                 try:
                     with open(file_path, "wb") as f:
                         f.write(file_content)

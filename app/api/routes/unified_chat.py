@@ -26,7 +26,7 @@ from app.db.database import get_db
 from app.config import settings
 from app.utils.infinity_embedder import InfinityEmbedder
 from app.services.ingestion_service import DocumentIngestionService
-from app.utils.string_utils import sanitize_collection_name, conversation_collection_name
+from app.utils.string_utils import sanitize_collection_name, conversation_collection_name, sanitize_filename
 from app.services.admin_config_service import AdminConfigService
 from app.services.rag_config_service import RAGConfigService
 
@@ -1342,7 +1342,7 @@ async def upload_file(
             
             # Generate a safe filename
             timestamp = int(time.time())
-            safe_filename = f"{timestamp}_{sanitize_collection_name(file.filename)}"
+            safe_filename = f"{timestamp}_{sanitize_filename(file.filename)}"
             
             # Create directory structure: user_id/conversation_id/
             file_path = f"{current_user.id}/{conversation_id}/{safe_filename}"

@@ -118,8 +118,9 @@ class DocumentIngestionService:
         process_time = time.time() - process_start
         
         if not docs:
-            logger.warning("No documents were produced by the document processor")
-            return 0
+            logger.error("No documents were produced by the document processor - file contains insufficient content for chunking")
+            logger.error("Collection creation will be cancelled to prevent empty collections")
+            raise ValueError("File contains insufficient content for processing. Please provide files with more substantial text content.")
         
         logger.info(f"Document processing completed in {process_time:.2f} seconds, produced {len(docs)} chunks")
         
@@ -134,7 +135,7 @@ class DocumentIngestionService:
             logger.info(f"Vectorization completed in {vector_time:.2f} seconds")
         except Exception as e:
             logger.error(f"Failed to add documents to vector store: {e}", exc_info=True)
-            return 0
+            raise Exception("Failed to add documents to vector store")
         
         total_time = time.time() - start_time
         logger.info(f"=== FILE INGESTION COMPLETED IN {total_time:.2f} SECONDS ===")
@@ -175,13 +176,17 @@ class DocumentIngestionService:
             process_time = time.time() - process_start
             
             if not docs:
-                logger.warning("No documents were produced by the document processor")
-                return 0
+                logger.error("No documents were produced by the document processor - file contains insufficient content for chunking")
+                logger.error("Collection creation will be cancelled to prevent empty collections")
+                raise ValueError("File contains insufficient content for processing. Please provide files with more substantial text content.")
                 
             logger.info(f"Document processing completed in {process_time:.2f} seconds, produced {len(docs)} chunks")
+        except ValueError:
+            # Re-raise ValueError to maintain the error handling flow
+            raise
         except Exception as e:
             logger.error(f"Failed to process file with Docling: {e}", exc_info=True)
-            return 0
+            raise Exception("Failed to process file with document processor")
         
         # STEP 3: Add to vector store
         logger.info(f"STEP 3: Adding {len(docs)} chunks to vector store")
@@ -195,7 +200,7 @@ class DocumentIngestionService:
             logger.info(f"Vectorization completed in {vector_time:.2f} seconds")
         except Exception as e:
             logger.error(f"Failed to add documents to vector store: {e}", exc_info=True)
-            return 0
+            raise Exception("Failed to add documents to vector store")
         
         total_time = time.time() - start_time
         logger.info(f"=== FILE OBJECT INGESTION COMPLETED IN {total_time:.2f} SECONDS ===")
@@ -291,12 +296,21 @@ class DocumentIngestionService:
             '.pdf': 'application/pdf',
             '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             '.doc': 'application/msword',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.xls': 'application/vnd.ms-excel',
+            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            '.ppt': 'application/vnd.ms-powerpoint',
             '.txt': 'text/plain',
             '.csv': 'text/csv',
             '.md': 'text/markdown',
-            '.json': 'application/json',
+            '.markdown': 'text/markdown',
             '.html': 'text/html',
             '.htm': 'text/html',
+            '.xhtml': 'application/xhtml+xml',
+            '.adoc': 'text/asciidoc',
+            '.asciidoc': 'text/asciidoc',
+            '.asc': 'text/asciidoc',
+            '.json': 'application/json',
             '.xml': 'application/xml'
         }
         
