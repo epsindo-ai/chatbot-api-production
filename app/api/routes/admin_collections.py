@@ -386,6 +386,10 @@ async def delete_admin_collection(
         collection_id: ID of the collection to delete
         force: If True, will unlink conversations before deleting the collection
     
+    Security Note: 
+        - Cannot delete the current global default collection for system safety
+        - To delete a global default collection, first set another collection as global default
+    
     Note: This always deletes the collection from Milvus as well.
     """
     db_collection = crud.get_collection(db, collection_id)
@@ -401,6 +405,13 @@ async def delete_admin_collection(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="This is not an admin collection"
+        )
+    
+    # Check if this is the current global default collection - prevent deletion
+    if db_collection.is_global_default:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete the current global default collection. Please set another collection as global default first."
         )
     
     # Check if there are conversations linked to this collection
