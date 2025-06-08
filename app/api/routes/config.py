@@ -77,6 +77,7 @@ async def get_unified_config(
         for config_item in general_configs_db:
             value = AdminConfigService.get_config(db, config_item.key)
             general_config[config_item.key] = value
+            
     except Exception as e:
         # Log the error
         logging.error(f"Error getting admin configs: {str(e)}")
@@ -84,6 +85,7 @@ async def get_unified_config(
         # Use empty dicts if there's an error
         rag_config = {}
         general_config = {}
+        chat_configs_db = []
     
     # Add default values if missing for RAG
     if AdminConfig.KEY_PREDEFINED_COLLECTION not in rag_config:
@@ -96,6 +98,36 @@ async def get_unified_config(
         rag_config[AdminConfig.KEY_MAX_FILE_SIZE_MB] = 10
     if AdminConfig.KEY_GLOBAL_COLLECTION_BEHAVIOR not in rag_config:
         rag_config[AdminConfig.KEY_GLOBAL_COLLECTION_BEHAVIOR] = "auto_update"
+    
+    # Add prompt configurations if missing - these are now in general section
+    if AdminConfig.KEY_GLOBAL_COLLECTION_RAG_PROMPT not in general_config:
+        general_config[AdminConfig.KEY_GLOBAL_COLLECTION_RAG_PROMPT] = """You are a helpful AI assistant for the organizational knowledge base. Use the provided context from official documents and resources to answer questions accurately and comprehensively. 
+
+Context: {context}
+
+Instructions:
+- Answer based only on the provided context
+- If information is not available, clearly state "I don't have enough information to answer that question"
+- Maintain a professional and helpful tone
+- Cite specific documents when possible"""
+    if AdminConfig.KEY_USER_COLLECTION_RAG_PROMPT not in general_config:
+        general_config[AdminConfig.KEY_USER_COLLECTION_RAG_PROMPT] = """You are a helpful AI assistant. Use the documents provided by the user to answer their questions accurately and comprehensively.
+
+Context: {context}
+
+Instructions:
+- Answer based on the user's uploaded documents
+- If the answer isn't in the context, politely say you don't know
+- Be concise, accurate, and helpful in your response
+- Reference specific sections of documents when relevant"""
+    if AdminConfig.KEY_REGULAR_CHAT_PROMPT not in general_config:
+        general_config[AdminConfig.KEY_REGULAR_CHAT_PROMPT] = """You are a helpful AI assistant. Provide clear, accurate, and helpful responses to the user's questions.
+
+Instructions:
+- Use your general knowledge to assist the user
+- Be conversational yet professional
+- Ask clarifying questions when needed
+- Provide step-by-step explanations for complex topics"""
     
     # Combine configs
     unified_config = {

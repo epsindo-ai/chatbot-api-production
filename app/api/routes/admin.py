@@ -77,8 +77,10 @@ def get_unified_config(
     # Get RAG config
     rag_config = RAGConfigService.get_client_config(db)
     
-    # Add global collection prompt to RAG config
+    # Add all prompt types to RAG config
     rag_config["globalCollectionRagPrompt"] = RAGConfigService.get_global_collection_rag_prompt(db)
+    rag_config["userCollectionRagPrompt"] = RAGConfigService.get_user_collection_rag_prompt(db)
+    rag_config["regularChatPrompt"] = RAGConfigService.get_regular_chat_prompt(db)
     
     # Combine configs
     unified_config = {
@@ -90,7 +92,7 @@ def get_unified_config(
             "top_p": llm_config.top_p,
             "max_tokens": llm_config.max_tokens,
             "description": llm_config.description,
-            "is_active": llm_config.is_active,
+            "enable_thinking": getattr(llm_config, 'enable_thinking', False),
         },
         "rag": rag_config
     }
@@ -178,6 +180,20 @@ def update_unified_config(
             RAGConfigService.set_global_collection_rag_prompt(db, prompt)
             result["updated"]["rag"] = result.get("updated", {}).get("rag", {})
             result["updated"]["rag"]["globalCollectionRagPrompt"] = prompt
+
+        # Update userCollectionRagPrompt if provided
+        if "userCollectionRagPrompt" in rag_config:
+            prompt = rag_config["userCollectionRagPrompt"]
+            RAGConfigService.set_user_collection_rag_prompt(db, prompt)
+            result["updated"]["rag"] = result.get("updated", {}).get("rag", {})
+            result["updated"]["rag"]["userCollectionRagPrompt"] = prompt
+
+        # Update regularChatPrompt if provided
+        if "regularChatPrompt" in rag_config:
+            prompt = rag_config["regularChatPrompt"]
+            RAGConfigService.set_regular_chat_prompt(db, prompt)
+            result["updated"]["rag"] = result.get("updated", {}).get("rag", {})
+            result["updated"]["rag"]["regularChatPrompt"] = prompt
     
     # Return the updated unified config
     return get_unified_config(db=db, current_user=current_user)
@@ -258,21 +274,8 @@ def get_predefined_collection(
     collection = AdminConfigService.get_predefined_collection(db)
     return {"collection": collection}
 
-@router.get("/global-collection-rag-prompt", response_model=Dict[str, Any])
-def get_global_collection_rag_prompt(
-    db: Session = Depends(get_db),
-    current_user: Any = Depends(get_current_admin_user)
-):
-    """Get the global collection RAG prompt."""
-    prompt = RAGConfigService.get_global_collection_rag_prompt(db)
-    return {"prompt": prompt}
-
-@router.post("/global-collection-rag-prompt", response_model=Dict[str, Any])
-def set_global_collection_rag_prompt(
-    prompt: str = Body(..., description="RAG system prompt for global collections"),
-    db: Session = Depends(get_db),
-    current_user: Any = Depends(get_current_admin_user)
-):
-    """Set the global collection RAG prompt."""
-    config = RAGConfigService.set_global_collection_rag_prompt(db, prompt)
-    return {"key": config.key, "value": config.value, "success": True}
+# Individual prompt endpoints removed - use unified-config endpoint instead
+# All prompt management is now handled through:
+# - GET /admin/unified-config (includes all prompts)
+# - PUT /admin/unified-config (updates all prompts)
+# This provides better atomicity and reduces API surface area

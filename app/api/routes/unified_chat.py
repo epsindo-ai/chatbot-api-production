@@ -108,24 +108,17 @@ ingestion_service = DocumentIngestionService()
 
 # Define the UnifiedChatRequest schema here if it's not in schemas.py
 class UnifiedChatRequest(schemas.ChatRequest):
-    """Unified schema for both regular chat and RAG chat."""
-    collection_name: Optional[str] = None  # When provided, use this admin collection
-    files: Optional[List[str]] = None  # List of file IDs to use for RAG
-    display_file_id: Optional[str] = None  # File ID to display in the chat panel
+    """Simplified unified schema for chat - collections and files are auto-bound."""
+    pass  # All needed fields are in the base ChatRequest
 
 # Define the UnifiedChatResponse schema here if it's not in schemas.py
 class UnifiedChatResponse(schemas.ChatResponse):
-    """Unified response schema for both regular chat and RAG chat."""
-    collection_name: Optional[str] = None
+    """Simplified unified response schema for chat."""
     used_rag: bool = False
-    added_files: Optional[List[str]] = None  # IDs of files added to the conversation
-    display_file_id: Optional[str] = None  # ID of file to display in chat panel
 
 class UnifiedStreamingChatResponse(schemas.StreamingChatResponse):
-    """Unified streaming response schema."""
-    collection_name: Optional[str] = None
+    """Simplified unified streaming response schema."""
     used_rag: bool = False
-    display_file_id: Optional[str] = None  # ID of file to display in chat panel
 
 class EmbeddingRequest(BaseModel):
     """Request model for embedding generation."""
@@ -147,11 +140,12 @@ async def unified_chat(
     db: Session = Depends(get_db)
 ):
     """
-    Unified chat endpoint that handles both regular and RAG chat.
+    Simplified unified chat endpoint.
+    Collections and files are auto-bound through conversation initiation and upload processes.
     """
-    print(f"DEBUG: Processing chat request with collection_name={request.collection_name}, conversation_id={request.conversation_id}")
+    print(f"DEBUG: Processing chat request for conversation_id={request.conversation_id}")
     
-    # Process the conversation ID and check type
+    # Process the conversation ID
     conversation_id = request.conversation_id
     if not conversation_id or conversation_id == "string":
         conversation_id = str(uuid.uuid4())
@@ -165,44 +159,7 @@ async def unified_chat(
         else:
             print(f"DEBUG: Conversation {conversation_id} not found")
     
-    # Process file IDs, filtering out invalid values
-    added_files = []
-    valid_file_ids = []
-    if request.files:
-        for file_id in request.files:
-            # Skip default "string" value or empty values
-            if file_id == "string" or not file_id:
-                continue
-                
-            try:
-                valid_file_ids.append(file_id)
-                added_files.append(file_id)
-            except (ValueError, TypeError):
-                continue
-
-    # If conversation is linked to global collection, ignore files and collection_name
-    using_collection = False
-    using_files = bool(valid_file_ids)
-    collection_name = None
-    display_file_id = None
-    
-    # Process display file if provided
-    if request.display_file_id and request.display_file_id != "string":
-        display_file_id = request.display_file_id
-        # Verify file exists and user has access
-        display_file = crud.get_file_storage(db, int(display_file_id))
-        if not display_file or display_file.user_id != current_user.id:
-            display_file_id = None
-            print(f"DEBUG: Display file {display_file_id} not found or user doesn't have access")
-        else:
-            print(f"DEBUG: Setting display file: {display_file_id}")
-            
-            # Update the conversation to link to this display file
-            if conversation:
-                crud.update_file_storage(db, int(display_file_id), {"conversation_id": conversation_id})
-                crud.update_conversation(db, conversation_id, display_file_id=int(display_file_id))
-    
-    # Determine the conversation type and mode based on existing conversation or request params
+    # Handle RAG request based on conversation type
     if conversation and conversation.conversation_type == models.ConversationType.GLOBAL_COLLECTION:
         # Check if the global collection has changed and handle based on behavior setting
         if crud.is_global_collection_outdated(db, conversation_id):
@@ -215,7 +172,7 @@ async def unified_chat(
                     error="The knowledge base has been updated. This conversation is now read-only. Please start a new conversation or migrate to the current knowledge base.",
                     response="",
                     conversation_id=conversation_id,
-                    display_file_id=display_file_id
+                    used_rag=False
                 )
             elif behavior == "auto_update":
                 # Auto-update the conversation to use the current global collection
@@ -226,8 +183,7 @@ async def unified_chat(
         
         # This is a global collection conversation, so we use the linked collection
         print(f"DEBUG: Using existing global collection conversation (id={conversation.id})")
-        using_collection = True
-        # Ignore request collection_name and files
+        collection_name = None
         if conversation.linked_global_collection:
             collection = conversation.linked_global_collection
             collection_name = collection.name
@@ -258,50 +214,11 @@ async def unified_chat(
                         print(f"DEBUG: ERROR - Collection not found with id={conversation.linked_global_collection_id}")
                 except Exception as e:
                     print(f"DEBUG: ERROR - Failed to repair collection link: {str(e)}")
-    elif conversation and conversation.conversation_type == models.ConversationType.USER_FILES:
-        # This is a user files conversation, so we use the attached files
-        print(f"DEBUG: Using existing user files conversation")
-        using_files = True
-        # Add any new files provided in the request
-        if valid_file_ids:
-            for file_id in valid_file_ids:
-                try:
-                    # Get file from storage
-                    file = crud.get_file_storage(db, file_id)
-                    if not file or file.user_id != current_user.id:
-                        continue
-                    
-                    # Connect file to conversation if not already connected
-                    if not file.conversation_id:
-                        file = crud.update_file_storage(db, file_id, {"conversation_id": conversation_id})
-                    
-                    added_files.append(file_id)
-                except Exception as e:
-                    # Log the error but continue with other files
-                    print(f"Error processing file {file_id}: {str(e)}")
-                    continue
-    else:
-        # Check if we have a rag collection to use
-        if request.collection_name and request.collection_name != "string":
-            if using_files:
-                # Can't use both admin collection and user files
-                return UnifiedChatResponse(
-                    status_code=400,
-                    error="Cannot use both collection_name and files. Choose one or the other.",
-                    response="",
-                    conversation_id=conversation_id,
-                    display_file_id=display_file_id
-                )
-                
-            # Use the specified admin collection
-            collection_name = request.collection_name
-            using_collection = True
-            print(f"DEBUG: Using admin collection: {collection_name}")
         
     # Handle RAG request
     try:
         # Handle the different cases for RAG
-        if using_collection:
+        if conversation and conversation.conversation_type == models.ConversationType.GLOBAL_COLLECTION and collection_name:
             print(f"DEBUG: Processing RAG request with admin collection {collection_name}")
             
             # Save the user message first
@@ -342,12 +259,10 @@ async def unified_chat(
                 response=response["response"],
                 conversation_id=response["conversation_id"],
                 meta_data=response["meta_data"],
-                collection_name=collection_name,
-                used_rag=True,
-                display_file_id=display_file_id
+                used_rag=True
             )
             
-        elif using_files:
+        elif conversation and conversation.conversation_type == models.ConversationType.USER_FILES:
             # Special case for using files
             print(f"DEBUG: Processing RAG request with user files")
             
@@ -397,9 +312,7 @@ async def unified_chat(
                 response=response,
                 conversation_id=conversation_id,
                 meta_data=request.meta_data,
-                used_rag=True,
-                added_files=added_files,
-                display_file_id=display_file_id
+                used_rag=True
             )
             
         # Regular chat (no RAG)
@@ -440,8 +353,7 @@ async def unified_chat(
                 response=response,
                 conversation_id=conversation_id,
                 meta_data=request.meta_data,
-                used_rag=False,
-                display_file_id=display_file_id
+                used_rag=False
             )
     
     except Exception as e:
@@ -455,7 +367,7 @@ async def unified_chat(
             response="",
             conversation_id=conversation_id,
             meta_data=request.meta_data,
-            display_file_id=display_file_id
+            used_rag=False
         )
 
 @router.post("/stream")
@@ -466,7 +378,8 @@ async def unified_stream_chat(
     db: Session = Depends(get_db)
 ):
     """
-    Unified streaming chat endpoint that handles both regular and RAG chat.
+    Simplified unified streaming chat endpoint.
+    Collections and files are auto-bound through conversation initiation and upload processes.
     """
     # Process the conversation ID
     conversation_id = request.conversation_id
@@ -476,53 +389,15 @@ async def unified_stream_chat(
     # Track conversation data
     conversation_data = {
         "id": conversation_id,
-        "used_rag": False,
-        "added_files": []
+        "used_rag": False
     }
-    
-    # Process file IDs, filtering out invalid values
-    valid_file_ids = []
-    if request.files:
-        for file_id in request.files:
-            # Skip default "string" value or empty values
-            if file_id == "string" or not file_id:
-                continue
-                
-            try:
-                valid_file_ids.append(file_id)
-                conversation_data["added_files"].append(file_id)
-            except (ValueError, TypeError):
-                continue
     
     # Get the conversation if it exists
     conversation = None
     if conversation_id:
         conversation = crud.get_conversation(db, conversation_id)
     
-    # Handle different conversation types
-    using_collection = False
-    collection_name = None
-    using_files = bool(valid_file_ids)
-    display_file_id = None
-    
-    # Process display file if provided
-    if request.display_file_id and request.display_file_id != "string":
-        display_file_id = request.display_file_id
-        # Verify file exists and user has access
-        display_file = crud.get_file_storage(db, int(display_file_id))
-        if not display_file or display_file.user_id != current_user.id:
-            display_file_id = None
-            print(f"DEBUG: Display file {display_file_id} not found or user doesn't have access")
-        else:
-            print(f"DEBUG: Setting display file: {display_file_id}")
-            
-            # Update the conversation to link to this display file
-            if conversation:
-                crud.update_file_storage(db, int(display_file_id), {"conversation_id": conversation_id})
-                crud.update_conversation(db, conversation_id, display_file_id=int(display_file_id))
-                # Update conversation_data
-                conversation_data["display_file_id"] = display_file_id
-    
+    # Handle conversation type-based logic
     if conversation and conversation.conversation_type == models.ConversationType.GLOBAL_COLLECTION:
         # Check if the global collection has changed and handle based on behavior setting
         if crud.is_global_collection_outdated(db, conversation_id):
@@ -542,7 +417,6 @@ async def unified_stream_chat(
                     print(f"DEBUG: Auto-updated conversation {conversation_id} to current global collection")
         
         # Use the linked global collection
-        using_collection = True
         collection = conversation.linked_global_collection
         if not collection:
             return StreamingResponse(
@@ -551,47 +425,17 @@ async def unified_stream_chat(
             )
         # Add admin prefix for global collections since they're stored with admin prefix in Milvus
         collection_name = f"admin_{collection.name}"
-    
-    # Regular conversation with user's own files
-    elif conversation and conversation.conversation_type == models.ConversationType.USER_FILES:
-        # If trying to use collection_name, return error
-        if request.collection_name and request.collection_name != "string":
-            return StreamingResponse(
-                generate_error_stream("This conversation is for user files only. You cannot use a predefined collection with it."),
-                media_type="application/x-ndjson"
-            )
         
-        # Use user's files
-        using_files = True
-    
-    # Regular conversation or new conversation
-    else:
-        # Check if trying to use both collection_name and files
-        using_collection = request.collection_name and request.collection_name != "string"
-        
-        if using_collection and using_files:
-            return StreamingResponse(
-                generate_error_stream("Cannot use both predefined collection and user files simultaneously. Choose one approach."),
-                media_type="application/x-ndjson"
-            )
-        
-        if using_collection:
-            collection_name = request.collection_name
     
     # Check if files are still processing before starting the stream
-    if using_files:
+    if conversation and conversation.conversation_type == models.ConversationType.USER_FILES:
         # Get files attached to this conversation
         conversation_files = crud.get_conversation_files(db, conversation_id)
         
         # Check if any files are still being processed
         files_processing = False
         for file in conversation_files:
-            if file.id in valid_file_ids:
-                # We've just added this file, check if it's processed
-                if file.file_metadata is None or not file.file_metadata.get("is_processed_for_rag", False):
-                    files_processing = True
-                    break
-            elif file.file_metadata is None or not file.file_metadata.get("is_processed_for_rag", False):
+            if file.file_metadata is None or not file.file_metadata.get("is_processed_for_rag", False):
                 # File exists but hasn't been processed yet
                 files_processing = True
                 break
@@ -602,32 +446,6 @@ async def unified_stream_chat(
                 generate_error_stream("Files are still being processed. Please wait a moment before chatting."),
                 media_type="application/x-ndjson"
             )
-    
-    # For newly added files in an ongoing conversation, ensure they're processed
-    if conversation_id and valid_file_ids:
-        # Check each file to ensure it's processed
-        for file_id in valid_file_ids:
-            file = crud.get_file_storage(db, file_id)
-            if file and (file.file_metadata is None or not file.file_metadata.get("is_processed_for_rag", False)):
-                # Wait for the file to be processed (with a reasonable timeout)
-                start_time = time.time()
-                processed = False
-                max_wait_time = 30  # Maximum wait time in seconds
-                
-                while time.time() - start_time < max_wait_time:
-                    # Refresh file data from database
-                    db.refresh(file)
-                    if file.file_metadata and file.file_metadata.get("is_processed_for_rag", False):
-                        processed = True
-                        break
-                    await asyncio.sleep(1)  # Wait a bit before checking again
-                
-                if not processed:
-                    # If file is still not processed after timeout, return error
-                    return StreamingResponse(
-                        generate_error_stream(f"File processing timeout. Please try again in a moment."),
-                        media_type="application/x-ndjson"
-                    )
     
     async def stream_response():
         try:
@@ -641,25 +459,6 @@ async def unified_stream_chat(
                 # Create a new conversation
                 db_conversation = crud.create_conversation(db, current_user.id, request.meta_data)
                 conversation_data["id"] = db_conversation.id
-            
-            # Attach files to conversation if provided
-            if using_files:
-                for file_id in valid_file_ids:
-                    try:
-                        # Get file from storage
-                        file = crud.get_file_storage(db, file_id)
-                        if not file or file.user_id != current_user.id:
-                            continue
-                        
-                        # Connect file to conversation if not already connected
-                        if not file.conversation_id:
-                            file = crud.update_file_storage(db, file_id, {"conversation_id": conversation_data["id"]})
-                        
-                        conversation_data["added_files"].append(file_id)
-                    except Exception as e:
-                        # Log the error but continue with other files
-                        print(f"Error processing file {file_id}: {str(e)}")
-                        continue
             
             # NOTE: Save user message once here rather than in each service function
             user_message = schemas.MessageCreate(
@@ -678,7 +477,7 @@ async def unified_stream_chat(
             )
             
             # Scenario 1: RAG with admin collection
-            if using_collection:
+            if conversation and conversation.conversation_type == models.ConversationType.GLOBAL_COLLECTION and collection_name:
                 conversation_data["used_rag"] = True
                 
                 # Check if collection exists
@@ -720,9 +519,7 @@ async def unified_stream_chat(
                     yield json.dumps({
                         "status": "done",
                         "conversation_id": conversation_data["id"],
-                        "collection_name": collection_name,
-                        "used_rag": True,
-                        "display_file_id": conversation_data.get("display_file_id")
+                        "used_rag": True
                     }) + "\n"
                     
                 except Exception as e:
@@ -735,7 +532,7 @@ async def unified_stream_chat(
                 # Scenario 2: Check for files attached to conversation
                 conversation_files = crud.get_conversation_files(db, conversation_data["id"])
                 
-                if conversation_files or conversation_data["added_files"]:
+                if conversation_files and conversation and conversation.conversation_type == models.ConversationType.USER_FILES:
                     conversation_data["used_rag"] = True
                     
                     # Create a temporary collection for this conversation
@@ -782,11 +579,9 @@ async def unified_stream_chat(
                         
                         # Send final message with metadata
                         yield json.dumps({
-                                                    "status": "done",
-                        "conversation_id": conversation_data["id"],
-                        "used_rag": True,
-                        "added_files": conversation_data["added_files"],
-                        "display_file_id": conversation_data.get("display_file_id")
+                            "status": "done",
+                            "conversation_id": conversation_data["id"],
+                            "used_rag": True
                         }) + "\n"
                         
                     except Exception as e:
@@ -817,9 +612,7 @@ async def unified_stream_chat(
                     yield json.dumps({
                         "status": "done",
                         "conversation_id": conversation_data["id"],
-                        "used_rag": False,
-                        "added_files": conversation_data["added_files"],
-                        "display_file_id": conversation_data.get("display_file_id")
+                        "used_rag": False
                     }) + "\n"
                 
         except Exception as e:

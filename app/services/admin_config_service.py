@@ -344,7 +344,7 @@ class AdminConfigService:
             AdminConfig.KEY_GLOBAL_COLLECTION_RAG_PROMPT, 
             prompt, 
             "System prompt for global collection RAG operations",
-            "rag",
+            "general",
             "string"
         )
         
@@ -365,4 +365,65 @@ class AdminConfigService:
             db,
             AdminConfig.KEY_GLOBAL_COLLECTION_RAG_PROMPT,
             DEFAULT_RAG_SYSTEM_PROMPT  # Default fallback
+        )
+
+    @staticmethod
+    def set_user_collection_rag_prompt(db: Session, prompt: str) -> AdminConfig:
+        """Set the RAG system prompt for user collections."""
+        return AdminConfigService.set_config(
+            db, 
+            AdminConfig.KEY_USER_COLLECTION_RAG_PROMPT, 
+            prompt, 
+            "System prompt for user collection RAG operations",
+            "general",
+            "string"
+        )
+        
+    @staticmethod
+    def get_user_collection_rag_prompt(db: Session) -> str:
+        """
+        Get the RAG system prompt for user collections from admin configuration.
+        Falls back to DEFAULT_RAG_SYSTEM_PROMPT if not configured.
+        
+        Args:
+            db: Database session
+            
+        Returns:
+            User collection RAG system prompt as string
+        """
+        from app.services.rag_service import DEFAULT_RAG_SYSTEM_PROMPT
+        return AdminConfigService.get_config(
+            db,
+            AdminConfig.KEY_USER_COLLECTION_RAG_PROMPT,
+            DEFAULT_RAG_SYSTEM_PROMPT  # Default fallback
+        )
+
+    @staticmethod
+    def set_regular_chat_prompt(db: Session, prompt: str) -> AdminConfig:
+        """Set the system prompt for regular chat (non-RAG)."""
+        return AdminConfigService.set_config(
+            db, 
+            AdminConfig.KEY_REGULAR_CHAT_PROMPT, 
+            prompt, 
+            "System prompt for regular chat (non-RAG) operations",
+            "general",
+            "string"
+        )
+        
+    @staticmethod
+    def get_regular_chat_prompt(db: Session) -> str:
+        """
+        Get the system prompt for regular chat (non-RAG) from admin configuration.
+        Falls back to None if not configured (regular chat has no default system prompt).
+        
+        Args:
+            db: Database session
+            
+        Returns:
+            Regular chat system prompt as string, or None if not configured
+        """
+        return AdminConfigService.get_config(
+            db,
+            AdminConfig.KEY_REGULAR_CHAT_PROMPT,
+            None  # No default system prompt for regular chat
         )

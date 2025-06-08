@@ -66,6 +66,60 @@ class RAGConfigService:
         return AdminConfigService.set_global_collection_rag_prompt(db, prompt)
     
     @staticmethod
+    def get_user_collection_rag_prompt(db: Session) -> str:
+        """
+        Get the RAG system prompt for user collections.
+        
+        Args:
+            db: Database session
+            
+        Returns:
+            User collection RAG system prompt
+        """
+        return AdminConfigService.get_user_collection_rag_prompt(db)
+    
+    @staticmethod
+    def set_user_collection_rag_prompt(db: Session, prompt: str) -> AdminConfig:
+        """
+        Set the RAG system prompt for user collections.
+        
+        Args:
+            db: Database session
+            prompt: The system prompt to set
+            
+        Returns:
+            AdminConfig object
+        """
+        return AdminConfigService.set_user_collection_rag_prompt(db, prompt)
+    
+    @staticmethod
+    def get_regular_chat_prompt(db: Session) -> str:
+        """
+        Get the system prompt for regular chat (non-RAG).
+        
+        Args:
+            db: Database session
+            
+        Returns:
+            Regular chat system prompt, or None if not configured
+        """
+        return AdminConfigService.get_regular_chat_prompt(db)
+    
+    @staticmethod
+    def set_regular_chat_prompt(db: Session, prompt: str) -> AdminConfig:
+        """
+        Set the system prompt for regular chat (non-RAG).
+        
+        Args:
+            db: Database session
+            prompt: The system prompt to set
+            
+        Returns:
+            AdminConfig object
+        """
+        return AdminConfigService.set_regular_chat_prompt(db, prompt)
+    
+    @staticmethod
     def get_rag_config(db: Session) -> Dict[str, Any]:
         """
         Get all RAG-related configuration parameters.
@@ -101,6 +155,8 @@ class RAGConfigService:
         return {
             "predefinedCollection": RAGConfigService.get_predefined_collection(db),
             "globalCollectionRagPrompt": RAGConfigService.get_global_collection_rag_prompt(db),
+            "userCollectionRagPrompt": RAGConfigService.get_user_collection_rag_prompt(db),
+            "regularChatPrompt": RAGConfigService.get_regular_chat_prompt(db),
             "allowUserUploads": AdminConfigService.get_config(
                 db,
                 AdminConfig.KEY_ALLOW_USER_UPLOADS,

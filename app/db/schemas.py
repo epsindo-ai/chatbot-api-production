@@ -168,14 +168,10 @@ class ChatRequest(BaseModel):
     meta_data: Optional[dict] = None
 
 class UnifiedChatRequest(BaseModel):
-    """Unified schema for both regular chat and RAG chat."""
+    """Simplified unified schema for chat - collections and files are auto-bound."""
     message: str
     conversation_id: Optional[str] = None
     meta_data: Optional[dict] = None
-    
-    # RAG-specific parameters
-    collection_name: Optional[str] = None  # When provided, use this admin collection
-    files: Optional[List[str]] = None  # List of file IDs to use for RAG
 
 class ChatResponse(BaseModel):
     status_code: int = 200
@@ -186,9 +182,7 @@ class ChatResponse(BaseModel):
     
 class UnifiedChatResponse(ChatResponse):
     """Unified response schema for both regular chat and RAG chat."""
-    collection_name: Optional[str] = None
     used_rag: bool = False
-    added_files: Optional[List[str]] = None  # IDs of files added to the conversation
 
 class StreamingChatResponse(BaseModel):
     """Response model for a single chunk in a streaming response"""

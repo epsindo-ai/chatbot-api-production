@@ -10,7 +10,6 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.documents.transformers import BaseDocumentTransformer
 from langchain.retrievers.document_compressors import DocumentCompressorPipeline
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains import create_retrieval_chain, create_history_aware_retriever
 from langchain_openai import ChatOpenAI
 from langchain_milvus.vectorstores import Milvus
 from langchain.retrievers import ContextualCompressionRetriever
@@ -201,9 +200,9 @@ class RagChatService:
                 print(f"DEBUG: Using global collection RAG prompt for collection: {collection_name}")
                 return RAGConfigService.get_global_collection_rag_prompt(db)
             else:
-                # Use user collection prompt (current default behavior)
+                # Use configurable user collection prompt
                 print(f"DEBUG: Using user collection RAG prompt for collection: {collection_name}")
-                return getattr(settings, 'RAG_SYSTEM_PROMPT', DEFAULT_RAG_SYSTEM_PROMPT)
+                return RAGConfigService.get_user_collection_rag_prompt(db)
         except Exception as e:
             print(f"DEBUG: Error getting RAG system prompt, falling back to default: {str(e)}")
             return DEFAULT_RAG_SYSTEM_PROMPT
@@ -267,112 +266,6 @@ class RagChatService:
         
         # Return configured LLM
         return ChatOpenAI(**model_params)
-    
-    def create_rag_chain(self, llm, retriever, db: Session, collection_name: str = None):
-        """Create a RAG chain with the specified LLM and retriever, using PostgreSQL for chat history."""
-        contextualize_q_system_prompt = (
-            "Berdasarkan riwayat chat dan pertanyaan terakhir pengguna "
-            "yang mungkin merujuk pada konteks dalam riwayat chat," 
-            "bentuk pertanyaan yang dapat dipahami. "
-            "Tanpa riwayat chat jangan menjawab pertanyaan,"
-            "hanya reformulasi jika diperlukan dan sebaliknya kembalikan seperti semula."
-        )
-        contextualize_q_prompt = ChatPromptTemplate.from_messages([
-            ("system", contextualize_q_system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ])
-        history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
-
-        # Get appropriate system prompt based on collection type
-        base_system_prompt = self._get_rag_system_prompt(db, collection_name)
-        system_prompt = f"{base_system_prompt}\n\nContext: {{context}}"
-
-        qa_prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ])
-        question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
-        rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
-
-        # Use CustomMessageHistory for PostgreSQL
-        conversational_rag_chain = RunnableWithMessageHistory(
-            rag_chain,
-            lambda session_id: CustomMessageHistory(session_id, db),
-            input_messages_key="input",
-            history_messages_key="chat_history",
-            output_messages_key="answer",
-        )
-        return conversational_rag_chain
-    
-    def get_conversation_chain(self, db: Session, user_id: int, collection_name: str, conversation_id: Optional[str] = None):
-        """Get or create a conversation with RAG chain for the user."""
-        print(f"DEBUG: Starting get_conversation_chain, user_id={user_id}, collection_name={collection_name}, conversation_id={conversation_id}")
-        
-        # Get or create conversation
-        is_new_conversation = False
-        if conversation_id:
-            db_conversation = crud.get_conversation(db, conversation_id)
-            if not db_conversation:
-                print(f"DEBUG: Conversation with ID {conversation_id} not found")
-                raise ValueError(f"Conversation with ID {conversation_id} not found")
-            print(f"DEBUG: Found existing conversation with ID {conversation_id}")
-        else:
-            db_conversation = crud.create_conversation(db, user_id)
-            is_new_conversation = True
-            conversation_id = db_conversation.id
-            print(f"DEBUG: Created new conversation with ID {conversation_id}")
-        
-        # Sanitize collection name for Milvus
-        from app.utils.string_utils import sanitize_collection_name
-        safe_collection_name = sanitize_collection_name(collection_name)
-        print(f"DEBUG: Sanitized collection name: {collection_name} -> {safe_collection_name}")
-        
-        # Check if collection exists in Milvus
-        collection_exists = self.vectorstore_manager.collection_exists(safe_collection_name)
-        print(f"DEBUG: Collection exists in Milvus: {collection_exists}")
-        
-        try:
-            # Create LLM and retriever
-            print(f"DEBUG: Creating LLM")
-            llm = self.get_llm(db)
-            print(f"DEBUG: Created LLM with model {llm.model_name}")
-            
-            print(f"DEBUG: Creating retriever for collection {collection_name}")
-            # Use admin-configurable top_k value
-            from app.services.rag_config_service import RAGConfigService
-            top_k = RAGConfigService.get_retriever_top_k(db)
-            retriever = self.vectorstore_manager.get_retriever(collection_name, top_k=top_k)
-            print(f"DEBUG: Successfully created retriever with top_k={top_k}")
-            
-            # Create the RAG chain
-            print(f"DEBUG: Creating RAG chain")
-            rag_chain = self.create_rag_chain(llm, retriever, db, collection_name)
-            print(f"DEBUG: Successfully created RAG chain")
-            
-            # Add message history integration
-            def get_session_history(session_id):
-                print(f"DEBUG: Getting session history for {session_id}")
-                return CustomMessageHistory(session_id, db)
-            
-            print(f"DEBUG: Creating RunnableWithMessageHistory")
-            conversational_rag_chain = RunnableWithMessageHistory(
-                rag_chain,
-                get_session_history,
-                input_messages_key="input",
-                history_messages_key="chat_history",
-                output_messages_key="answer",
-            )
-            print(f"DEBUG: Successfully created RAG chain with message history")
-            
-            return conversational_rag_chain, conversation_id, is_new_conversation
-        
-        except Exception as e:
-            print(f"DEBUG: ERROR in get_conversation_chain: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            raise
     
     async def get_streaming_rag_response(self, db: Session, user_id: int, message: str, collection_name: str, conversation_id: Optional[str] = None, meta_data: Optional[dict] = None, save_user_message: bool = True):
         """Get a streaming RAG response."""

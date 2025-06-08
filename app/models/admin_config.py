@@ -31,4 +31,6 @@ class AdminConfig(Base):
     KEY_ALLOW_USER_UPLOADS = "allow_user_uploads"
     KEY_MAX_FILE_SIZE_MB = "max_file_size_mb"
     KEY_GLOBAL_COLLECTION_BEHAVIOR = "global_collection_behavior"  # auto_update or readonly_on_change
-    KEY_GLOBAL_COLLECTION_RAG_PROMPT = "global_collection_rag_prompt"  # System prompt for global collection RAG 
+    KEY_GLOBAL_COLLECTION_RAG_PROMPT = "global_collection_rag_prompt"  # System prompt for global collection RAG
+    KEY_USER_COLLECTION_RAG_PROMPT = "user_collection_rag_prompt"  # System prompt for user collection RAG
+    KEY_REGULAR_CHAT_PROMPT = "regular_chat_prompt"  # System prompt for regular chat (non-RAG) 

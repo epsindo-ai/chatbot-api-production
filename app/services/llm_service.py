@@ -6,12 +6,13 @@ import asyncio
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationChain
 from langchain_openai import ChatOpenAI
-from langchain.schema import BaseMessage, HumanMessage, AIMessage
+from langchain.schema import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from langchain.callbacks.base import BaseCallbackHandler
 
 from app.config import settings
 from app.db import crud, models, schemas
+from app.services.rag_config_service import RAGConfigService
 
 # Store conversation memory
 conversations: Dict[str, ConversationBufferMemory] = {}
@@ -150,6 +151,18 @@ def extract_user_info(messages: List[models.Message]) -> Dict[str, str]:
     
     return info
 
+def get_system_prompt(db: Session) -> Optional[str]:
+    """
+    Get the configurable system prompt for regular chat.
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        System prompt string if configured, None otherwise
+    """
+    return RAGConfigService.get_regular_chat_prompt(db)
+
 def get_conversation_memory(db: Session, conversation_id: str = None, user_id: int = None):
     """
     Get or create a conversation with its memory
@@ -252,6 +265,12 @@ async def get_llm_response(db: Session, user_id: int, message: str, conversation
     
     # Convert memory messages to the format expected by the LLM
     messages = []
+    
+    # Add system prompt if configured
+    system_prompt = get_system_prompt(db)
+    if system_prompt:
+        messages.append(SystemMessage(content=system_prompt))
+    
     for msg in memory.chat_memory.messages:
         if isinstance(msg, HumanMessage):
             messages.append(HumanMessage(content=msg.content))
@@ -320,6 +339,12 @@ async def get_streaming_llm_response(db: Session, user_id: int, message: str, co
     try:
         # Convert memory messages to the format expected by the LLM
         messages = []
+        
+        # Add system prompt if configured
+        system_prompt = get_system_prompt(db)
+        if system_prompt:
+            messages.append(SystemMessage(content=system_prompt))
+        
         for msg in memory.chat_memory.messages:
             if isinstance(msg, HumanMessage):
                 messages.append(HumanMessage(content=msg.content))
