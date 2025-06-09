@@ -2,7 +2,6 @@ from app.db.base_class import Base
 
 # Import and register all models here
 from app.models.user import User, UserRole
-from app.models.chat_history import ChatHistory
 from app.models.llm_config import LLMConfig
 from app.models.admin_config import AdminConfig
 

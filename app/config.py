@@ -12,13 +12,13 @@ class Settings(BaseModel):
     # JWT Settings
     SECRET_KEY: str = os.getenv("SECRET_KEY", "default_jwt_key_change_in_production")
     ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "2400"))
     
     # Database Settings
-    POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")
-    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "postgres")
-    POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "localhost")
-    POSTGRES_PORT: str = os.getenv("POSTGRES_PORT", "5432")
+    POSTGRES_USER: str = os.getenv("POSTGRES_USER", "myuser")
+    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "mysecretpassword")
+    POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "192.168.1.10")
+    POSTGRES_PORT: str = os.getenv("POSTGRES_PORT", "35433")
     POSTGRES_DB: str = os.getenv("POSTGRES_DB", "chatbot")
     
     # LLM Settings
