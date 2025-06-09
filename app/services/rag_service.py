@@ -306,9 +306,11 @@ class RagChatService:
             
             # Create the contextualize question chain
             contextualize_q_system_prompt = (
-                "Given the chat history and the latest user question, "
-                "create a standalone question that captures all relevant context. "
-                "If there's no relevant context, return the original question unchanged."
+                "Transform the user's question into a clear, direct search query. "
+                "Use chat history context only to make ambiguous questions more specific. "
+                "Return only the search query without any explanations, formatting, or markdown. "
+                "Keep the same language as the user's question. "
+                "If the question is already clear, return it unchanged."
             )
             
             contextualize_q_prompt = ChatPromptTemplate.from_messages([
@@ -317,8 +319,8 @@ class RagChatService:
                 ("human", "{input}"),
             ])
             
-            # Use a non-streaming LLM for context
-            context_llm = self.get_llm(db, streaming=False)
+            # Use a non-streaming LLM for context with thinking disabled for efficiency
+            context_llm = self.get_llm(db, streaming=False, override_thinking=False)
             contextualizer = contextualize_q_prompt | context_llm | StrOutputParser()
             
             # Get chat history
@@ -330,16 +332,24 @@ class RagChatService:
                 "input": message
             })
             
+            # DEBUG: Print the contextualized question that will be sent to vectorstore
+            print(f"DEBUG: Original user message: {message}")
+            print(f"DEBUG: Contextualized question sent to vectorstore: {contextualized_question}")
+            print(f"DEBUG: Chat history length: {len(chat_history)} messages")
+            
             # Retrieve relevant documents using LangChain's native async method
             relevant_docs = await retriever.ainvoke(contextualized_question)
             
             # Format context from documents
             context_texts = []
+            doc_info = []
             for i, doc in enumerate(relevant_docs):
-                print(f"DEBUG: Doc {i} type: {type(doc)}, value: {repr(doc)[:200]}")
+                doc_info.append(self._get_doc_debug_info(doc, i))
                 context_texts.append(self._extract_doc_text(doc))
+            
             context = "\n\n".join(context_texts)
-            print(f"DEBUG: Created context with {len(context)} characters from {len(relevant_docs)} documents")
+            print(f"DEBUG: Retrieved {len(relevant_docs)} documents: {', '.join(doc_info)}")
+            print(f"DEBUG: Created context with {len(context)} characters")
             
             # Create streaming QA chain with appropriate prompt based on collection type
             base_system_prompt = self._get_rag_system_prompt(db, collection_name)
@@ -419,17 +429,19 @@ class RagChatService:
 
             # Create the contextualize question chain
             contextualize_q_system_prompt = (
-                "Given the chat history and the latest user question, "
-                "create a standalone question that captures all relevant context. "
-                "If there's no relevant context, return the original question unchanged."
+                "Transform the user's question into a clear, direct search query. "
+                "Use chat history context only to make ambiguous questions more specific. "
+                "Return only the search query without any explanations, formatting, or markdown. "
+                "Keep the same language as the user's question. "
+                "If the question is already clear, return it unchanged."
             )
             contextualize_q_prompt = ChatPromptTemplate.from_messages([
                 ("system", contextualize_q_system_prompt),
                 MessagesPlaceholder(variable_name="chat_history"),
                 ("human", "{input}"),
             ])
-            # Use a non-streaming LLM for context
-            context_llm = self.get_llm(db, streaming=False)
+            # Use a non-streaming LLM for context with thinking disabled for efficiency
+            context_llm = self.get_llm(db, streaming=False, override_thinking=False)
             contextualizer = contextualize_q_prompt | context_llm | StrOutputParser()
 
             # Get chat history
@@ -441,16 +453,26 @@ class RagChatService:
                 "input": message
             })
 
+            # DEBUG: Print the contextualized question that will be sent to vectorstore
+            print(f"DEBUG: Original user message: {message}")
+            print(f"DEBUG: Contextualized question sent to vectorstore: {contextualized_question}")
+            print(f"DEBUG: Chat history length: {len(chat_history)} messages")
+
             # Retrieve relevant documents using LangChain's native async method
             relevant_docs = await retriever.ainvoke(contextualized_question)
 
             # Format context from documents
             context_texts = []
+            doc_info = []
             for i, doc in enumerate(relevant_docs):
-                print(f"DEBUG: Doc {i} type: {type(doc)}, value: {repr(doc)[:200]}")
-                context_texts.append(self._extract_doc_text(doc))
+                doc_info.append(self._get_doc_debug_info(doc, i))
+                doc_text = self._extract_doc_text(doc)
+                context_texts.append(doc_text)
+            
             context = "\n\n".join(context_texts)
-            print(f"DEBUG: Created context with {len(context)} characters from {len(relevant_docs)} documents")
+            print(f"DEBUG: Retrieved {len(relevant_docs)} documents: {', '.join(doc_info)}")
+            print(f"DEBUG: Created context with {len(context)} characters")
+            print(f"DEBUG: Final context preview: {context[:200]}...")
 
             # Create QA chain (non-streaming) with appropriate prompt based on collection type
             base_system_prompt = self._get_rag_system_prompt(db, collection_name)
@@ -535,8 +557,8 @@ class RagChatService:
                 print(f"DEBUG: Error getting admin config: {str(e)}")
                 admin_config = {}
             
-            # Create LLM using the get_llm method
-            llm = self.get_llm(db)
+            # Create LLM using the get_llm method (disable thinking for efficiency)
+            llm = self.get_llm(db, override_thinking=False)
             print(f"DEBUG: Created LLM with model {llm.model_name}")
             
             # Get appropriate system prompt based on collection type
@@ -568,32 +590,23 @@ class RagChatService:
                     )
                     print(f"DEBUG: Created retriever for collection: {conversation_collection}")
                     
+                    # DEBUG: Print the query that will be sent to vectorstore
+                    print(f"DEBUG: Query sent to vectorstore: {query}")
+                    print(f"DEBUG: Using top_k: {top_k}")
+                    
                     # Retrieve relevant documents using LangChain's native async method
                     retrieved_docs = await retriever.ainvoke(query)
-                    print(f"DEBUG: Retrieved {len(retrieved_docs)} documents from collection")
-                    if retrieved_docs:
-                        first_doc = retrieved_docs[0]
-                        print(f"DEBUG: Type of first retrieved doc: {type(first_doc)}")
-                        if isinstance(first_doc, dict):
-                            print(f"DEBUG: First doc keys: {list(first_doc.keys())}")
-                            print(f"DEBUG: First doc values: {first_doc}")
-                        elif hasattr(first_doc, '__dict__'):
-                            print(f"DEBUG: First doc __dict__: {first_doc.__dict__}")
-                            if hasattr(first_doc, 'page_content'):
-                                print(f"DEBUG: first_doc.page_content: {getattr(first_doc, 'page_content', None)}")
-                            else:
-                                print("DEBUG: first_doc does not have page_content attribute")
-                        else:
-                            print(f"DEBUG: First doc value: {repr(first_doc)}")
-                    else:
-                        print("DEBUG: No documents retrieved.")
+                    
                     # Join the text of the retrieved documents
                     context_texts = []
+                    doc_info = []
                     for i, doc in enumerate(retrieved_docs):
-                        print(f"DEBUG: Doc {i} type: {type(doc)}, value: {repr(doc)[:200]}")
+                        doc_info.append(self._get_doc_debug_info(doc, i))
                         context_texts.append(self._extract_doc_text(doc))
+                    
                     context = "\n\n".join(context_texts)
-                    print(f"DEBUG: Created context with {len(context)} characters from {len(retrieved_docs)} documents")
+                    print(f"DEBUG: Retrieved {len(retrieved_docs)} documents: {', '.join(doc_info) if doc_info else 'None'}")
+                    print(f"DEBUG: Created context with {len(context)} characters")
                     
                     # Use the context directly as a string without trying to create a Document using LangChain's native async method
                     result = await document_chain.ainvoke({
@@ -744,12 +757,30 @@ class RagChatService:
                 search_kwargs={"k": top_k}
             )
             
+            # DEBUG: Print the query that will be sent to vectorstore (streaming method)
+            print(f"DEBUG STREAMING: Query sent to vectorstore: {query}")
+            print(f"DEBUG STREAMING: Using top_k: {top_k}")
+            print(f"DEBUG STREAMING: Chat history length: {len(history)} messages")
+            
             # Get relevant documents using LangChain's native async method
             docs = await retriever.ainvoke(query)
+            print(f"DEBUG STREAMING: Retrieved {len(docs)} documents")
             
             # Format context from documents
             context_parts = [self._extract_doc_text(doc) for doc in docs]
             context = "\n\n".join(context_parts)
+            
+            # DEBUG: Show context information
+            print(f"DEBUG STREAMING: Context length: {len(context)} characters")
+            for i, part in enumerate(context_parts[:3]):  # Show first 3 parts
+                preview = part[:100] + "..." if len(part) > 100 else part
+                print(f"DEBUG STREAMING: Context part {i+1}: {preview}")
+            
+            if len(context) > 0:
+                context_preview = context[:200] + "..." if len(context) > 200 else context
+                print(f"DEBUG STREAMING: Final context preview: {context_preview}")
+            else:
+                print("DEBUG STREAMING: No context retrieved!")
             
             # Create prompt with appropriate system prompt based on collection type
             base_system_prompt = self._get_rag_system_prompt(db, safe_collection_name)
@@ -760,13 +791,8 @@ class RagChatService:
                 ("human", "{input}")
             ])
             
-            # Create chat model
-            chat = ChatOpenAI(
-                model=settings.LLM_MODEL,
-                api_key=settings.OPENAI_API_KEY,
-                temperature=0.7,
-                streaming=True
-            )
+            # Create chat model using the get_llm method (disable thinking for efficiency)
+            chat = self.get_llm(db, streaming=True, override_thinking=False)
             
             # Create chain
             chain = prompt | chat
@@ -828,7 +854,6 @@ class RagChatService:
             return ""
 
     def _extract_doc_text(self, doc):
-        print(f"_extract_doc_text: type={type(doc)}, value={repr(doc)[:200]}")
         label = None
         if hasattr(doc, 'metadata') and isinstance(doc.metadata, dict):
             if 'filename' in doc.metadata:
@@ -859,3 +884,34 @@ class RagChatService:
         else:
             text = str(doc)
         return f"{label} {text}"
+
+    def _get_doc_debug_info(self, doc, index: int) -> str:
+        """Extract minimal debug information from a document for logging."""
+        try:
+            # Try to get primary key or unique identifier
+            if hasattr(doc, 'metadata') and doc.metadata:
+                # Check for common ID fields
+                for id_field in ['pk', 'id', '_id', 'document_id', 'source']:
+                    if id_field in doc.metadata:
+                        return f"Doc {index}: {id_field}={doc.metadata[id_field]}"
+                
+                # If no ID found, show source/filename if available  
+                if 'source' in doc.metadata:
+                    return f"Doc {index}: source={doc.metadata['source']}"
+                elif 'filename' in doc.metadata:
+                    return f"Doc {index}: file={doc.metadata['filename']}"
+                else:
+                    # Show first few metadata keys
+                    keys = list(doc.metadata.keys())[:3]
+                    return f"Doc {index}: metadata_keys={keys}"
+            else:
+                # Fallback to document type and content preview
+                content_preview = ""
+                if hasattr(doc, 'page_content'):
+                    content_preview = doc.page_content[:50] + "..." if len(doc.page_content) > 50 else doc.page_content
+                elif hasattr(doc, 'content'):
+                    content_preview = doc.content[:50] + "..." if len(doc.content) > 50 else doc.content
+                
+                return f"Doc {index}: type={type(doc).__name__}, preview='{content_preview}'"
+        except Exception as e:
+            return f"Doc {index}: error extracting info - {str(e)}"
