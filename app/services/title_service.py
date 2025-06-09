@@ -7,6 +7,7 @@ import asyncio
 from app.db import crud, models, schemas
 from app.config import settings
 from app.services.llm_service import get_llm
+from app.utils.title_utils import clean_title
 
 class TitleGenerationService:
     """
@@ -56,6 +57,7 @@ class TitleGenerationService:
         prompt = """Generate a short, descriptive title (2-5 words) for a conversation that starts with this message.
 Focus only on the main topic or intent. Be concise and specific.
 Use the same language as the user's message.
+Do not use any special characters, markdown symbols, arrows, or formatting.
 
 Message: "{message}"
 
@@ -67,11 +69,7 @@ Title: """
         # Generate title
         message = HumanMessage(content=prompt.format(message=first_message.content))
         response = llm.invoke([message])
-        title = response.content.strip('"\'.,;:!?-').strip()
-        
-        # Capitalize first letter
-        if title and len(title) > 0:
-            title = title[0].upper() + title[1:]
+        title = clean_title(response.content)
         
         # Update conversation
         conversation.headline = title
@@ -110,6 +108,7 @@ Title: """
         prompt = """Generate a short, descriptive title (2-5 words) for a conversation containing these messages.
 Focus on the main topic or intent. Be concise and specific.
 Use the same language as the user's messages.
+Do not use any special characters, markdown symbols, arrows, or formatting.
 
 Messages:
 {messages}
@@ -127,11 +126,7 @@ Title: """
         # Generate title
         message = HumanMessage(content=prompt.format(messages=formatted_messages))
         response = llm.invoke([message])
-        title = response.content.strip('"\'.,;:!?-').strip()
-        
-        # Capitalize first letter
-        if title and len(title) > 0:
-            title = title[0].upper() + title[1:]
+        title = clean_title(response.content)
         
         # Update conversation
         conversation.headline = title
@@ -205,13 +200,13 @@ Is there a significant shift in topic? Answer YES or NO only."""
         prompt = """Generate a short, descriptive title (2-5 words) for a conversation that has shifted to a new topic.
 Focus on the most recent topic or intent. Be concise and specific.
 Use the same language as the user's messages.
-
-Previous title: "{previous_title}"
+Do not use any special characters, markdown symbols, arrows, or formatting.
+Generate only the new title, not a comparison or transition.
 
 Recent messages:
 {messages}
 
-New title reflecting the current topic: """
+Title: """
         
         formatted_messages = ""
         for msg in recent_messages:
@@ -223,15 +218,10 @@ New title reflecting the current topic: """
         
         # Generate title
         message = HumanMessage(content=prompt.format(
-            previous_title=conversation.headline,
             messages=formatted_messages
         ))
         response = llm.invoke([message])
-        title = response.content.strip('"\'.,;:!?-').strip()
-        
-        # Capitalize first letter
-        if title and len(title) > 0:
-            title = title[0].upper() + title[1:]
+        title = clean_title(response.content)
         
         # Update conversation
         conversation.headline = title
@@ -263,6 +253,7 @@ New title reflecting the current topic: """
         prompt = """Generate a short, comprehensive title (2-5 words) that captures the entire conversation.
 Focus on the most significant topic or purpose. Be concise but descriptive.
 Use the same language as the user's messages.
+Do not use any special characters, markdown symbols, arrows, or formatting.
 
 Conversation length: {message_count} messages
 First user message: "{first_message}"
@@ -290,11 +281,7 @@ Final comprehensive title: """
             current_title=conversation.headline or "Untitled"
         ))
         response = llm.invoke([message])
-        title = response.content.strip('"\'.,;:!?-').strip()
-        
-        # Capitalize first letter
-        if title and len(title) > 0:
-            title = title[0].upper() + title[1:]
+        title = clean_title(response.content)
         
         # Update conversation
         conversation.headline = title

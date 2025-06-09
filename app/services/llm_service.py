@@ -13,6 +13,7 @@ from langchain.callbacks.base import BaseCallbackHandler
 from app.config import settings
 from app.db import crud, models, schemas
 from app.services.rag_config_service import RAGConfigService
+from app.utils.title_utils import clean_title
 
 # Store conversation memory
 conversations: Dict[str, ConversationBufferMemory] = {}
@@ -408,6 +409,7 @@ async def generate_conversation_headline(db: Session, conversation_id: str) -> s
     # Simple prompt
     prompt = """What is the main topic of these messages in 2-5 words? 
 Just the core topic, no extra words.
+Do not use any special characters, markdown symbols, arrows, or formatting.
 
 Use the user language for the headline/summary.
 Examples:
@@ -431,14 +433,7 @@ Messages:
     # Generate topic
     message = HumanMessage(content=prompt)
     response = llm.invoke([message])
-    topic = response.content
-    
-    # Clean up the topic
-    topic = topic.strip('"\'.,;:!?-').strip()
-    
-    # Make first letter capital
-    if topic and len(topic) > 0:
-        topic = topic[0].upper() + topic[1:]
+    topic = clean_title(response.content)
     
     # Update the conversation
     conversation.headline = topic
