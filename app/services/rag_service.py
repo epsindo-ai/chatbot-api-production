@@ -108,7 +108,6 @@ class RemoteVectorStoreManager:
             from pymilvus import connections, utility
             connections.connect(uri=self.milvus_uri)
             collections = utility.list_collections()
-            print(f"DEBUG: Listed Milvus collections: {collections}")
             return collections
         except Exception as e:
             print(f"DEBUG: ERROR listing collections: {str(e)}")
@@ -361,6 +360,41 @@ class RagChatService:
                 ("human", "{input}"),
             ])
             
+            # Prepare the final input variables for the LLM
+            final_input_vars = {
+                "context": context,
+                "chat_history": chat_history,
+                "input": message
+            }
+            
+            # DEBUG: Show exactly what the LLM receives
+            print("\n" + "="*80)
+            print("🔍 FINAL LLM INPUT DEBUG - STREAMING RAG RESPONSE")
+            print("="*80)
+            
+            # Format the final system prompt with context
+            final_system_prompt = qa_system_prompt.format(context=context)
+            print(f"\n📋 FINAL SYSTEM PROMPT:\n{final_system_prompt}")
+            
+            print(f"\n💬 CHAT HISTORY ({len(chat_history)} messages):")
+            for i, msg in enumerate(chat_history):
+                msg_type = type(msg).__name__
+                if hasattr(msg, 'content'):
+                    content_preview = msg.content[:100] + "..." if len(msg.content) > 100 else msg.content
+                    print(f"  [{i}] {msg_type}: {content_preview}")
+                else:
+                    print(f"  [{i}] {msg_type}: {str(msg)[:100]}...")
+            
+            print(f"\n👤 USER INPUT:\n{message}")
+            
+            print(f"\n📚 RAG CONTEXT ({len(context)} chars):")
+            context_preview = context[:500] + "..." if len(context) > 500 else context
+            print(f"{context_preview}")
+            
+            print("\n" + "="*80)
+            print("🚀 SENDING TO LLM...")
+            print("="*80 + "\n")
+            
             # Prepare to collect the full response
             full_response = []
             
@@ -368,11 +402,7 @@ class RagChatService:
             chain = qa_prompt | llm
             
             # Use LangChain's native async streaming method
-            async for chunk in chain.astream({
-                "context": context,
-                "chat_history": chat_history,
-                "input": message
-            }):
+            async for chunk in chain.astream(final_input_vars):
                 token = chunk.content
                 full_response.append(token)
                 yield token
@@ -484,12 +514,43 @@ class RagChatService:
             ])
             chain = qa_prompt | llm
 
-            # Run the chain and collect the full response using LangChain's native async method
-            result = await chain.ainvoke({
+            # Prepare the final input variables for the LLM
+            final_input_vars = {
                 "context": context,
                 "chat_history": chat_history,
                 "input": message
-            })
+            }
+            
+            # DEBUG: Show exactly what the LLM receives
+            print("\n" + "="*80)
+            print("🔍 FINAL LLM INPUT DEBUG - NON-STREAMING RAG RESPONSE")
+            print("="*80)
+            
+            # Format the final system prompt with context
+            final_system_prompt = qa_system_prompt.format(context=context)
+            print(f"\n📋 FINAL SYSTEM PROMPT:\n{final_system_prompt}")
+            
+            print(f"\n💬 CHAT HISTORY ({len(chat_history)} messages):")
+            for i, msg in enumerate(chat_history):
+                msg_type = type(msg).__name__
+                if hasattr(msg, 'content'):
+                    content_preview = msg.content[:100] + "..." if len(msg.content) > 100 else msg.content
+                    print(f"  [{i}] {msg_type}: {content_preview}")
+                else:
+                    print(f"  [{i}] {msg_type}: {str(msg)[:100]}...")
+            
+            print(f"\n👤 USER INPUT:\n{message}")
+            
+            print(f"\n📚 RAG CONTEXT ({len(context)} chars):")
+            context_preview = context[:500] + "..." if len(context) > 500 else context
+            print(f"{context_preview}")
+            
+            print("\n" + "="*80)
+            print("🚀 SENDING TO LLM...")
+            print("="*80 + "\n")
+
+            # Run the chain and collect the full response using LangChain's native async method
+            result = await chain.ainvoke(final_input_vars)
             complete_response = result.content if hasattr(result, 'content') else str(result)
 
             # Save the assistant response with RAG context
@@ -797,15 +858,41 @@ class RagChatService:
             # Create chain
             chain = prompt | chat
             
+            # Prepare the final input variables for the LLM
+            final_input_vars = {
+                "context": context,
+                "chat_history": history_text,
+                "input": query
+            }
+            
+            # DEBUG: Show exactly what the LLM receives in streaming conversation RAG
+            print("\n" + "="*80)
+            print("🔍 FINAL LLM INPUT DEBUG - STREAMING CONVERSATION RAG")
+            print("="*80)
+            
+            # Get the formatted messages that will be sent to the LLM
+            formatted_messages = await prompt.aformat_messages(**final_input_vars)
+            
+            print(f"\n📋 FORMATTED MESSAGES TO LLM ({len(formatted_messages)} messages):")
+            for i, msg in enumerate(formatted_messages):
+                msg_type = type(msg).__name__
+                role = getattr(msg, 'type', 'unknown')
+                content_preview = msg.content[:300] + "..." if len(msg.content) > 300 else msg.content
+                print(f"  [{i}] {msg_type} ({role}):\n{content_preview}\n")
+            
+            print(f"\n💬 RAW CHAT HISTORY INPUT:\n{history_text[:500]}...")
+            print(f"\n👤 USER QUERY:\n{query}")
+            print(f"\n📚 RAG CONTEXT ({len(context)} chars):\n{context[:500]}...")
+            
+            print("\n" + "="*80)
+            print("🚀 SENDING TO LLM...")
+            print("="*80 + "\n")
+            
             # Stream the response
             full_response = []
             
             # Use LangChain's native async streaming method
-            async for chunk in chain.astream({
-                "context": context,
-                "chat_history": history_text,
-                "input": query
-            }):
+            async for chunk in chain.astream(final_input_vars):
                 token = chunk.content
                 full_response.append(token)
                 yield token
