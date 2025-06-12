@@ -29,15 +29,23 @@ async def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Create access token with shorter expiry if user is admin
+    # Check if user account is active
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account has been deactivated. Please contact an administrator.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Create access token with shorter expiry if user is admin or super admin
     access_token = create_access_token(
         data={"sub": user.username},
-        is_admin=(user.role == models.UserRole.ADMIN)
+        is_admin=(user.role in [models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN])
     )
     
     # Calculate token expiry in seconds
     expires_in = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
-    if user.role == models.UserRole.ADMIN:
+    if user.role in [models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN]:
         from app.utils.auth import ADMIN_TOKEN_EXPIRE_MINUTES
         expires_in = ADMIN_TOKEN_EXPIRE_MINUTES * 60
     
@@ -62,15 +70,22 @@ async def login(user_data: schemas.UserLogin, db: Session = Depends(get_db)):
             detail="Incorrect username or password"
         )
     
-    # Create access token with shorter expiry if user is admin
+    # Check if user account is active
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account has been deactivated. Please contact an administrator."
+        )
+    
+    # Create access token with shorter expiry if user is admin or super admin
     access_token = create_access_token(
         data={"sub": user.username},
-        is_admin=(user.role == models.UserRole.ADMIN)
+        is_admin=(user.role in [models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN])
     )
     
     # Calculate token expiry in seconds
     expires_in = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
-    if user.role == models.UserRole.ADMIN:
+    if user.role in [models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN]:
         from app.utils.auth import ADMIN_TOKEN_EXPIRE_MINUTES
         expires_in = ADMIN_TOKEN_EXPIRE_MINUTES * 60
     

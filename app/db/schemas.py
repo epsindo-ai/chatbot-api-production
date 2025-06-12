@@ -4,8 +4,9 @@ from datetime import datetime
 from enum import Enum
 
 class UserRole(str, Enum):
-    USER = "user"
-    ADMIN = "admin"
+    USER = "USER"
+    ADMIN = "ADMIN"
+    SUPER_ADMIN = "SUPER_ADMIN"
 
 class ConversationType(str, Enum):
     REGULAR = "regular"
@@ -52,6 +53,7 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str
+    role: Optional[UserRole] = UserRole.USER  # Default to USER role
 
 class UserLogin(BaseModel):
     username: str
@@ -89,6 +91,48 @@ class UserInfo(BaseModel):
     role: str
     is_active: bool = True
 
+# Admin user management schemas
+class AdminUserCreate(BaseModel):
+    """Schema for admin creating a new user account with temporary password"""
+    username: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    role: Optional[UserRole] = UserRole.USER
+    temporary_password: str
+    password_expires_hours: Optional[int] = 24  # Default 24 hours for temp password
+
+class AdminPasswordReset(BaseModel):
+    """Schema for admin resetting a user's password"""
+    user_id: int
+    temporary_password: str
+    password_expires_hours: Optional[int] = 24
+
+class PasswordChangeRequest(BaseModel):
+    """Schema for user changing their password from temporary to permanent"""
+    current_password: str
+    new_password: str
+    confirm_password: str
+
+class UserCreateResponse(BaseModel):
+    """Response schema for admin user creation"""
+    user_id: int
+    username: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    role: str
+    is_active: bool
+    temporary_password: str
+    password_expires_at: datetime
+    must_reset_password: bool
+
+class PasswordResetResponse(BaseModel):
+    """Response schema for password reset"""
+    user_id: int
+    username: str
+    temporary_password: str
+    password_expires_at: datetime
+    message: str
+
 # Token schemas
 class Token(BaseModel):
     access_token: str
@@ -107,6 +151,9 @@ class UserLoginResponse(BaseModel):
     role: UserRole
     expires_in: int  # in seconds
     is_active: Optional[bool] = True
+    must_reset_password: Optional[bool] = False
+    is_temporary_password: Optional[bool] = False
+    temp_password_expires_at: Optional[str] = None
 
 # Message schemas
 class MessageBase(BaseModel):

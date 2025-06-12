@@ -7,8 +7,9 @@ import enum
 from app.db.base_class import Base
 
 class UserRole(enum.Enum):
-    USER = "user"
-    ADMIN = "admin"
+    USER = "USER"
+    ADMIN = "ADMIN"
+    SUPER_ADMIN = "SUPER_ADMIN"
 
 class User(Base):
     """User model for authentication and authorization"""
@@ -23,6 +24,11 @@ class User(Base):
     role = Column(Enum(UserRole), default=UserRole.USER)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # One-time password fields for admin-managed account creation and resets
+    is_temporary_password = Column(Boolean, default=False, nullable=False)
+    temp_password_expires_at = Column(DateTime(timezone=True), nullable=True)
+    must_reset_password = Column(Boolean, default=False, nullable=False)
     
     # Relationships
     conversations = relationship("Conversation", back_populates="user")

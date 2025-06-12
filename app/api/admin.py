@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from app.db import crud, models
 from app.db.database import get_db
-from app.utils.auth import get_admin_access
+from app.utils.auth import get_admin_access, get_super_admin_access
 from app.db.models import UserRole
 from app.config import settings
 
@@ -32,10 +32,10 @@ class UserResponse(BaseModel):
 async def update_user_role(
     request: UserRoleUpdateRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_admin_access)
+    current_user: models.User = Depends(get_super_admin_access)
 ):
     """
-    Update a user's role directly
+    Update a user's role directly - Super Admin only
     """
     # Find the user
     user = crud.get_user_by_username(db, request.username)
@@ -52,22 +52,26 @@ async def update_user_role(
             detail=f"User '{request.username}' already has the role '{request.role.value}'"
         )
     
-    # If demoting from admin to user, perform additional checks
-    if user.role == UserRole.ADMIN and request.role == UserRole.USER:
-        # Prevent demoting the last admin user
-        admin_count = db.query(models.User).filter(models.User.role == UserRole.ADMIN).count()
-        if admin_count <= 1:
+    # Prevent self-role changes
+    if user.username == current_user.username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot change your own role"
+        )
+    
+    # If demoting from super admin, ensure at least one super admin remains
+    if user.role == UserRole.SUPER_ADMIN and request.role != UserRole.SUPER_ADMIN:
+        super_admin_count = db.query(models.User).filter(models.User.role == UserRole.SUPER_ADMIN).count()
+        if super_admin_count <= 1:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot demote the last admin user"
+                detail="Cannot demote the last super admin user"
             )
-        
-        # Prevent self-demotion
-        if user.username == current_user.username:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot demote yourself"
-            )
+    
+    # If promoting to super admin, add warning about privileges
+    if request.role == UserRole.SUPER_ADMIN and user.role != UserRole.SUPER_ADMIN:
+        # Log this critical action
+        print(f"WARNING: User '{user.username}' is being promoted to SUPER_ADMIN by '{current_user.username}'")
     
     # Update the user role
     user.role = request.role

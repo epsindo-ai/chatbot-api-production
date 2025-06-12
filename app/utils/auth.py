@@ -71,7 +71,7 @@ async def get_admin_user(request: Request, current_user: models.User = Depends(g
     #         detail="HTTPS is required for admin endpoints in production"
     #     )
         
-    if current_user.role != models.UserRole.ADMIN:
+    if current_user.role not in [models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions. Admin role required."
@@ -81,13 +81,26 @@ async def get_admin_user(request: Request, current_user: models.User = Depends(g
 
 async def get_admin_access(current_user: models.User = Depends(get_current_active_user)):
     """
-    Check if the current user has admin access.
+    Check if the current user has admin access (ADMIN or SUPER_ADMIN).
     This version doesn't require a Request parameter.
     """
-    if current_user.role != models.UserRole.ADMIN:
+    if current_user.role not in [models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions. Admin role required."
+        )
+    
+    return current_user
+
+async def get_super_admin_access(current_user: models.User = Depends(get_current_active_user)):
+    """
+    Check if the current user has super admin access.
+    Only super admins can manage other admins.
+    """
+    if current_user.role != models.UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions. Super admin role required."
         )
     
     return current_user 

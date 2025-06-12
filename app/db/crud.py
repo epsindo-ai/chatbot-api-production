@@ -34,7 +34,7 @@ def create_user(db: Session, user: schemas.UserCreate):
         full_name=user.full_name,
         hashed_password=hashed_password,
         is_active=user.is_active,
-        role=UserRole.USER
+        role=getattr(user, 'role', UserRole.USER)  # Use provided role or default to USER
     )
     db.add(db_user)
     db.commit()
@@ -49,6 +49,74 @@ def delete_user(db: Session, user_id: int):
         db.commit()
         return True
     return False
+
+# Temporary password management
+def create_user_with_temp_password(db: Session, user_data: schemas.AdminUserCreate):
+    """Create a user with a temporary password that must be changed on first login"""
+    from app.utils.temp_password import calculate_expiry
+    
+    hashed_password = bcrypt.hashpw(user_data.temporary_password.encode(), bcrypt.gensalt()).decode()
+    expires_at = calculate_expiry(user_data.password_expires_hours)
+    
+    db_user = models.User(
+        username=user_data.username,
+        email=user_data.email,
+        full_name=user_data.full_name,
+        hashed_password=hashed_password,
+        is_active=True,
+        role=user_data.role,
+        is_temporary_password=True,
+        temp_password_expires_at=expires_at,
+        must_reset_password=True
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+def reset_user_password(db: Session, user_id: int, temporary_password: str, expires_hours: int = 24):
+    """Reset a user's password to a temporary one"""
+    from app.utils.temp_password import calculate_expiry
+    
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        return None
+    
+    hashed_password = bcrypt.hashpw(temporary_password.encode(), bcrypt.gensalt()).decode()
+    expires_at = calculate_expiry(expires_hours)
+    
+    user.hashed_password = hashed_password
+    user.is_temporary_password = True
+    user.temp_password_expires_at = expires_at
+    user.must_reset_password = True
+    user.updated_at = func.now()
+    
+    db.commit()
+    db.refresh(user)
+    return user
+
+def set_permanent_password(db: Session, user_id: int, new_password: str):
+    """Set a permanent password for a user (removing temporary password flags)"""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        return None
+    
+    hashed_password = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    
+    user.hashed_password = hashed_password
+    user.is_temporary_password = False
+    user.temp_password_expires_at = None
+    user.must_reset_password = False
+    user.updated_at = func.now()
+    
+    db.commit()
+    db.refresh(user)
+    return user
+
+def is_user_password_expired(user: models.User) -> bool:
+    """Check if user's temporary password has expired"""
+    from app.utils.temp_password import is_password_expired
+    return user.is_temporary_password and is_password_expired(user.temp_password_expires_at)
 
 # Conversation CRUD operations
 def get_conversation(db: Session, conversation_id: str):

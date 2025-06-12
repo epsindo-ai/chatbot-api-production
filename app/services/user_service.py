@@ -56,17 +56,33 @@ def authenticate_user(username: str, password: str, db: Session = None):
     if not verify_password(password, user.hashed_password):
         return False
     
+    # Check if user account is active
+    if not user.is_active:
+        return False
+    
     return user
 
 def create_initial_user(db: Session):
-    """Create an initial user if no users exist."""
+    """Create an initial super admin user if no users exist."""
     existing_users = crud.get_users(db, limit=1)
     
     if not existing_users:
-        user_data = schemas.UserCreate(
-            username="testuser",
-            email="test@example.com",
-            full_name="Test User",
-            password="password123"
-        )
-        crud.create_user(db, user_data) 
+        # Check if there's already a super admin user (safety check)
+        super_admin_exists = db.query(models.User).filter(
+            models.User.role == models.UserRole.SUPER_ADMIN
+        ).first()
+        
+        if not super_admin_exists:
+            user_data = schemas.UserCreate(
+                username="superadmin",
+                email="admin@company.com",
+                full_name="Super Administrator",
+                password="superadmin123",  # Should be changed immediately after deployment
+                role=schemas.UserRole.SUPER_ADMIN
+            )
+            created_user = crud.create_user(db, user_data)
+            print(f"Created initial super admin user: {created_user.username}")
+            print("IMPORTANT: Please change the default password immediately!")
+            return created_user
+    
+    return None 
