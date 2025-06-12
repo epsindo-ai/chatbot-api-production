@@ -624,29 +624,26 @@ async def upload_files_and_create_collection(
     description: Optional[str] = Form(None),
     files: List[UploadFile] = File(...),
     is_global_default: bool = Form(False),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     current_user: models.User = Depends(get_admin_access),
     db: Session = Depends(get_db)
 ):
     """
-    Upload files and create a new admin collection in one operation.
-    This is the most convenient way for admins to create collections.
+    Upload files and create a new admin collection.
     
-    Args:
-        name: Collection name (must be unique)
-        description: Optional collection description
-        files: Files to upload and include in the collection
-        is_global_default: Whether to set this as the global default collection
+    This endpoint returns immediately and processes everything in the background:
+    1. Collection creation in database and Milvus
+    2. File uploads to MinIO  
+    3. File processing for RAG
     
-    Returns:
-        Collection details with processing status
+    Returns immediately with pending status, all processing happens in background.
     """
     try:
-        # Check if collection with this name already exists
-        existing_collection = crud.get_collection_by_name(db, name)
-        if existing_collection:
+        # Basic validation only
+        if not name or not name.strip():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Collection with name '{name}' already exists"
+                detail="Collection name cannot be empty"
             )
         
         if not files:
@@ -655,11 +652,22 @@ async def upload_files_and_create_collection(
                 detail="At least one file must be provided"
             )
         
-        # Validate file types and sizes
-        supported_extensions = ['.pdf', '.txt', '.doc', '.docx', '.csv', '.md']
-        max_file_size = 50 * 1024 * 1024  # 50MB for admin uploads
+        # Check if collection with this name already exists
+        existing_collection = crud.get_collection_by_name(db, name)
+        if existing_collection:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Collection with name '{name}' already exists"
+            )
         
+        # Basic file type validation (quick check)
+        supported_extensions = ['.pdf', '.txt', '.doc', '.docx', '.csv', '.md']
         for file in files:
+            if not file.filename:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="All files must have valid filenames"
+                )
             file_ext = os.path.splitext(file.filename)[1].lower()
             if not any(file_ext.endswith(ext) for ext in supported_extensions):
                 raise HTTPException(
@@ -667,170 +675,35 @@ async def upload_files_and_create_collection(
                     detail=f"Unsupported file type: {file_ext}. Supported types: {', '.join(supported_extensions)}"
                 )
         
-        # Create collection in database first
-        collection_create = schemas.CollectionCreate(
+        # Read file contents in memory (this is fast - only async operation we do here)
+        file_data_list = []
+        for file in files:
+            content = await file.read()
+            file_data_list.append({
+                "filename": file.filename,
+                "content": content,
+                "content_type": file.content_type,
+                "size": len(content)
+            })
+            await file.seek(0)  # Reset for potential reuse
+        
+        # Schedule ALL operations in background task - no blocking operations here!
+        background_tasks.add_task(
+            process_admin_collection_creation,
             name=name,
             description=description,
+            file_data_list=file_data_list,
+            is_global_default=is_global_default,
             user_id=current_user.id,
-            is_admin_only=True,
-            is_global_default=is_global_default
+            db_conn_string=settings.DATABASE_URL
         )
-        db_collection = crud.create_collection(db, collection_create)
-        
-        # Create sanitized collection name for Milvus with admin prefix
-        from app.utils.string_utils import sanitize_collection_name
-        safe_collection_name = sanitize_collection_name(f"admin_{name}")
-        
-        # Create the collection in Milvus
-        try:
-            collection_created = ingestion_service.create_new_collection(safe_collection_name, description or "")
-            if not collection_created:
-                if vector_store_manager.collection_exists(safe_collection_name):
-                    print(f"Collection {safe_collection_name} already exists in Milvus, proceeding...")
-                else:
-                    raise Exception(f"Failed to create collection {safe_collection_name} in Milvus")
-        except Exception as e:
-            # Rollback database collection creation
-            crud.delete_collection(db, db_collection.id)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to create collection in vector store: {str(e)}"
-            )
-        
-        # Upload and process files
-        from app.services.minio_service import MinioService
-        
-        minio_service = MinioService()
-        processed_files = []
-        failed_files = []
-        total_chunks = 0
-        
-        for file in files:
-            try:
-                # Read file content
-                file_content = await file.read()
-                file_size = len(file_content)
-                
-                # Check file size
-                if file_size > max_file_size:
-                    failed_files.append({
-                        "filename": file.filename,
-                        "error": f"File too large. Maximum size: {max_file_size/1024/1024}MB"
-                    })
-                    continue
-                
-                # Generate safe filename
-                timestamp = int(time.time())
-                safe_filename = f"{timestamp}_{sanitize_collection_name(file.filename)}"
-                file_path = f"admin/{current_user.id}/{safe_filename}"
-                
-                # Upload to MinIO
-                await file.seek(0)  # Reset file position
-                minio_service.upload_file(
-                    file_data=file_content,
-                    file_path=file_path,
-                    content_type=file.content_type
-                )
-                
-                # Create file record in database
-                file_create = schemas.FileStorageCreate(
-                    user_id=current_user.id,
-                    filename=safe_filename,
-                    original_filename=file.filename,
-                    file_path=file_path,
-                    file_size=file_size,
-                    mime_type=file.content_type,
-                    file_metadata={"is_admin_upload": True}
-                )
-                db_file = crud.create_file_storage(db, file_create)
-                
-                # Add file to collection
-                collection_file_create = schemas.CollectionFileCreate(
-                    collection_id=db_collection.id,
-                    file_id=db_file.id
-                )
-                collection_file = crud.add_file_to_collection(db, collection_file_create)
-                
-                # Process file for vector storage
-                await file.seek(0)  # Reset file position again
-                file_obj = io.BytesIO(file_content)
-                
-                num_docs = ingestion_service.ingest_file_object(
-                    file_obj=file_obj,
-                    filename=file.filename,
-                    collection_name=safe_collection_name,
-                    metadata={
-                        "source_file_id": db_file.id,
-                        "file_name": file.filename,
-                        "collection_id": db_collection.id,
-                        "collection_name": name
-                    }
-                )
-                
-                # Update file metadata
-                crud.update_file_storage(db, db_file.id, {
-                    "file_metadata": {
-                        **(db_file.file_metadata or {}),
-                        "is_processed_for_rag": True,
-                        "chunk_count": num_docs,
-                        "processed_at": datetime.utcnow().isoformat()
-                    }
-                })
-                
-                # Update collection file record
-                crud.update_collection_file(db, collection_file.id, schemas.CollectionFileUpdate(
-                    is_processed=True
-                ))
-                
-                processed_files.append({
-                    "file_id": db_file.id,
-                    "filename": file.filename,
-                    "chunks_processed": num_docs
-                })
-                total_chunks += num_docs
-                
-            except Exception as e:
-                print(f"Error processing file {file.filename} for collection {name}: {e}")
-                failed_files.append({
-                    "filename": file.filename,
-                    "error": str(e)
-                })
-        
-        # If no files were processed successfully, delete the collection
-        if not processed_files:
-            try:
-                ingestion_service.delete_collection(safe_collection_name)
-            except:
-                pass
-            crud.delete_collection(db, db_collection.id)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to process any files for the collection"
-            )
-        
-        # Update global default collection setting if requested
-        if is_global_default:
-            from app.services.admin_config_service import AdminConfigService
-            AdminConfigService.set_predefined_collection(db, name)
         
         return {
-            "collection": {
-                "id": db_collection.id,
-                "name": db_collection.name,
-                "description": db_collection.description,
-                "is_global_default": db_collection.is_global_default,
-                "created_at": db_collection.created_at.isoformat()
-            },
-            "processing_summary": {
-                "total_files": len(files),
-                "processed_successfully": len(processed_files),
-                "failed": len(failed_files),
-                "total_chunks_created": total_chunks
-            },
-            "processed_files": processed_files,
-            "failed_files": failed_files,
-            "milvus_collection_name": safe_collection_name,
-            "message": f"Collection '{name}' created successfully with {len(processed_files)} files uploaded and processed"
+            "status": "processing",
+            "message": f"Collection '{name}' creation started. All {len(files)} files are being processed in the background.",
+            "total_files": len(files),
+            "collection_name": name,
+            "note": "Use GET /api/admin/collections/status/{name} to check processing status"
         }
         
     except HTTPException:
@@ -840,4 +713,472 @@ async def upload_files_and_create_collection(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create collection: {str(e)}"
-        ) 
+        )
+
+# Background task function for complete admin collection creation
+async def process_admin_collection_creation(
+    name: str, 
+    description: Optional[str], 
+    file_data_list: List[Dict], 
+    is_global_default: bool, 
+    user_id: int, 
+    db_conn_string: str
+):
+    """Background task to create collection and process all files completely in background."""
+    try:
+        # Import here to avoid circular imports
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        import asyncio
+        from app.services.minio_service import MinioService
+        from app.utils.string_utils import sanitize_collection_name
+        
+        print(f"Starting background collection creation: {name}")
+        
+        # Create a new database session for this background task
+        engine = create_engine(db_conn_string)
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        db = SessionLocal()
+        
+        try:
+            # Check if collection already exists (race condition protection)
+            existing_collection = crud.get_collection_by_name(db, name)
+            if existing_collection:
+                print(f"Collection {name} already exists, aborting background creation")
+                return
+            
+            # Step 1: Create collection in database
+            collection_create = schemas.CollectionCreate(
+                name=name,
+                description=description,
+                user_id=user_id,
+                is_admin_only=True,
+                is_global_default=is_global_default
+            )
+            db_collection = crud.create_collection(db, collection_create)
+            print(f"Created database collection: {db_collection.id}")
+            
+            # Step 2: Create collection in Milvus (run in thread pool)
+            safe_collection_name = sanitize_collection_name(f"admin_{name}")
+            
+            def create_milvus_collection():
+                collection_created = ingestion_service.create_new_collection(safe_collection_name, description or "")
+                if not collection_created:
+                    if vector_store_manager.collection_exists(safe_collection_name):
+                        print(f"Collection {safe_collection_name} already exists in Milvus, proceeding...")
+                        return True
+                    else:
+                        raise Exception(f"Failed to create collection {safe_collection_name} in Milvus")
+                return True
+            
+            await asyncio.to_thread(create_milvus_collection)
+            print(f"Created Milvus collection: {safe_collection_name}")
+            
+            # Step 3: Upload files to MinIO and create database records (run in thread pool)
+            def upload_files_sync():
+                minio_service = MinioService()
+                uploaded_files = []
+                max_file_size = 50 * 1024 * 1024  # 50MB
+                
+                for file_data in file_data_list:
+                    try:
+                        # Check file size
+                        if file_data["size"] > max_file_size:
+                            print(f"Skipping file {file_data['filename']} - too large: {file_data['size']} bytes")
+                            continue
+                        
+                        # Generate safe filename
+                        timestamp = int(time.time())
+                        safe_filename = f"{timestamp}_{sanitize_collection_name(file_data['filename'])}"
+                        file_path = f"admin/{user_id}/{safe_filename}"
+                        
+                        # Upload to MinIO (synchronous)
+                        success = minio_service.upload_file(
+                            file_data=file_data["content"],
+                            file_path=file_path,
+                            content_type=file_data["content_type"]
+                        )
+                        
+                        if not success:
+                            print(f"Failed to upload file {file_data['filename']} to MinIO")
+                            continue
+                        
+                        # Create file record in database
+                        file_create = schemas.FileStorageCreate(
+                            user_id=user_id,
+                            filename=safe_filename,
+                            original_filename=file_data["filename"],
+                            file_path=file_path,
+                            file_size=file_data["size"],
+                            mime_type=file_data["content_type"],
+                            file_metadata={"is_admin_upload": True}
+                        )
+                        db_file = crud.create_file_storage(db, file_create)
+                        
+                        # Add file to collection
+                        collection_file_create = schemas.CollectionFileCreate(
+                            collection_id=db_collection.id,
+                            file_id=db_file.id
+                        )
+                        collection_file = crud.add_file_to_collection(db, collection_file_create)
+                        
+                        uploaded_files.append({
+                            "db_file": db_file,
+                            "original_filename": file_data["filename"]
+                        })
+                        
+                        print(f"Uploaded file {file_data['filename']} to MinIO and created DB record")
+                        
+                    except Exception as e:
+                        print(f"Error uploading file {file_data['filename']}: {e}")
+                        continue
+                
+                return uploaded_files
+            
+            uploaded_files = await asyncio.to_thread(upload_files_sync)
+            print(f"Uploaded {len(uploaded_files)} files to MinIO")
+            
+            # Step 4: Process files for RAG (run in thread pool)
+            def process_files_for_rag():
+                minio_service = MinioService()
+                processed_count = 0
+                
+                for file_info in uploaded_files:
+                    try:
+                        db_file = file_info["db_file"]
+                        
+                        # Download file from MinIO
+                        download_success, file_data = minio_service.download_file(db_file.file_path)
+                        if not download_success:
+                            print(f"Failed to download file {db_file.original_filename} from MinIO")
+                            continue
+                        
+                        # Process file for vector storage (synchronous)
+                        num_docs = ingestion_service.ingest_file_object(
+                            file_obj=file_data,
+                            filename=db_file.original_filename,
+                            collection_name=safe_collection_name,
+                            metadata={
+                                "source_file_id": db_file.id,
+                                "file_name": db_file.original_filename,
+                                "collection_id": db_collection.id,
+                                "collection_name": name
+                            }
+                        )
+                        
+                        if num_docs > 0:
+                            # Update file metadata
+                            crud.update_file_storage(db, db_file.id, {
+                                "file_metadata": {
+                                    **(db_file.file_metadata or {}),
+                                    "is_processed_for_rag": True,
+                                    "chunk_count": num_docs,
+                                    "processed_at": datetime.utcnow().isoformat()
+                                }
+                            })
+                            
+                            # Update collection file record
+                            collection_files = crud.get_collection_files_by_file_id(db, db_file.id)
+                            for cf in collection_files:
+                                crud.update_collection_file(db, cf.id, schemas.CollectionFileUpdate(
+                                    is_processed=True
+                                ))
+                            
+                            processed_count += 1
+                            print(f"Processed file {db_file.original_filename} - created {num_docs} chunks")
+                        else:
+                            print(f"Failed to process file {db_file.original_filename} - no chunks created")
+                            
+                    except Exception as e:
+                        print(f"Error processing file {file_info['original_filename']} for RAG: {e}")
+                        continue
+                
+                return processed_count
+            
+            processed_count = await asyncio.to_thread(process_files_for_rag)
+            print(f"Processed {processed_count} files for RAG")
+            
+            # Step 5: Set global default if requested (run in thread pool)
+            if is_global_default:
+                def set_global_default():
+                    from app.services.admin_config_service import AdminConfigService
+                    AdminConfigService.set_predefined_collection(db, name)
+                
+                await asyncio.to_thread(set_global_default)
+                print(f"Set {name} as global default collection")
+            
+            print(f"Completed background collection creation: {name} with {processed_count} processed files")
+            
+        except Exception as e:
+            print(f"Error in background collection creation: {e}")
+            # Try to clean up on error
+            try:
+                if 'db_collection' in locals():
+                    crud.delete_collection(db, db_collection.id)
+                if 'safe_collection_name' in locals():
+                    ingestion_service.delete_collection(safe_collection_name)
+            except:
+                pass
+            raise
+        finally:
+            db.close()
+            
+    except Exception as e:
+        print(f"Fatal error in admin background collection creation: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+# Background task function for admin file processing (kept for backwards compatibility)
+async def process_admin_file_for_rag(db_file_id: int, collection_name: str, db_conn_string: str, metadata: dict):
+    """Background task to process an admin uploaded file for RAG."""
+    try:
+        # Import here to avoid circular imports
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        import asyncio
+        
+        # Create a new database session for this background task
+        engine = create_engine(db_conn_string)
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        db = SessionLocal()
+        
+        try:
+            # Get file
+            file = crud.get_file_storage(db, db_file_id)
+            if not file:
+                print(f"Admin file not found: file_id={db_file_id}")
+                return
+            
+            print(f"Processing admin file {db_file_id} ({file.original_filename}) for collection {collection_name}")
+            
+            # Get MinIO service and download file
+            from app.services.minio_service import MinioService
+            minio_service = MinioService()
+            
+            download_success, file_data = minio_service.download_file(file.file_path)
+            if not download_success:
+                print(f"Failed to download admin file {db_file_id} from MinIO")
+                return
+            
+            # Initialize ingestion service and process file
+            # Use asyncio.to_thread to avoid blocking the event loop
+            def process_file_sync():
+                return ingestion_service.ingest_file_object(
+                    file_obj=file_data,
+                    filename=file.original_filename,
+                    collection_name=collection_name,
+                    metadata=metadata
+                )
+            
+            # Run the synchronous operation in a thread pool
+            num_docs = await asyncio.to_thread(process_file_sync)
+            
+            if num_docs > 0:
+                # Update file metadata to indicate successful processing
+                crud.update_file_storage(db, db_file_id, {
+                    "file_metadata": {
+                        **(file.file_metadata or {}),
+                        "is_processed_for_rag": True,
+                        "chunk_count": num_docs,
+                        "processed_at": datetime.utcnow().isoformat()
+                    }
+                })
+                
+                # Update collection file record
+                collection_files = crud.get_collection_files_by_file_id(db, db_file_id)
+                for cf in collection_files:
+                    crud.update_collection_file(db, cf.id, schemas.CollectionFileUpdate(
+                        is_processed=True
+                    ))
+                
+                print(f"Successfully processed admin file {db_file_id} ({file.original_filename}) - created {num_docs} chunks")
+            else:
+                print(f"Failed to process admin file {db_file_id} ({file.original_filename}) - no chunks created")
+                
+        finally:
+            db.close()
+            
+    except Exception as e:
+        print(f"Error in admin background file processing: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+@router.get("/status/{collection_name}")
+async def get_collection_creation_status(
+    collection_name: str,
+    current_user: models.User = Depends(get_admin_access),
+    db: Session = Depends(get_db)
+):
+    """
+    Check the status of a collection creation process.
+    
+    Returns:
+        - status: "not_found", "processing", "completed", or "error"
+        - collection: Collection details if created
+        - files: List of files with their processing status
+        - summary: Overview of processing progress
+    """
+    try:
+        # Check if collection exists
+        collection = crud.get_collection_by_name(db, collection_name)
+        if not collection:
+            return {
+                "status": "not_found",
+                "message": f"Collection '{collection_name}' not found. It may still be being created.",
+                "collection_name": collection_name
+            }
+        
+        # Get collection with files
+        collection_with_files = crud.get_collection_with_files(db, collection.id)
+        if not collection_with_files:
+            return {
+                "status": "error",
+                "message": f"Collection '{collection_name}' exists but cannot retrieve file details.",
+                "collection_name": collection_name
+            }
+        
+        # Check processing status of all files
+        files_status = []
+        all_processed = True
+        any_error = False
+        
+        for file in collection_with_files.files:
+            is_processed = (
+                file.file_metadata and 
+                file.file_metadata.get("is_processed_for_rag", False)
+            )
+            
+            has_error = (
+                file.file_metadata and 
+                file.file_metadata.get("processing_error") is not None
+            )
+            
+            if not is_processed and not has_error:
+                all_processed = False
+            
+            if has_error:
+                any_error = True
+            
+            files_status.append({
+                "file_id": file.id,
+                "filename": file.original_filename,
+                "is_processed": is_processed,
+                "chunk_count": file.file_metadata.get("chunk_count", 0) if file.file_metadata else 0,
+                "processing_error": file.file_metadata.get("processing_error") if file.file_metadata else None,
+                "processed_at": file.file_metadata.get("processed_at") if file.file_metadata else None
+            })
+        
+        # Calculate summary
+        processed_count = sum(1 for f in files_status if f["is_processed"])
+        error_count = sum(1 for f in files_status if f["processing_error"])
+        total_count = len(files_status)
+        
+        # Determine overall status
+        if all_processed:
+            overall_status = "completed"
+            message = f"Collection '{collection_name}' creation completed successfully. All {processed_count} files processed."
+        elif any_error and processed_count + error_count == total_count:
+            overall_status = "completed_with_errors"
+            message = f"Collection '{collection_name}' creation completed with errors. {processed_count} files processed, {error_count} failed."
+        else:
+            overall_status = "processing"
+            message = f"Collection '{collection_name}' creation in progress. {processed_count}/{total_count} files completed."
+        
+        return {
+            "status": overall_status,
+            "message": message,
+            "collection": {
+                "id": collection.id,
+                "name": collection.name,
+                "description": collection.description,
+                "is_global_default": collection.is_global_default,
+                "created_at": collection.created_at.isoformat()
+            },
+            "summary": {
+                "total_files": total_count,
+                "processed_files": processed_count,
+                "failed_files": error_count,
+                "pending_files": total_count - processed_count - error_count
+            },
+            "files": files_status
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error checking collection status: {str(e)}",
+            "collection_name": collection_name
+        }
+
+@router.get("/{collection_id}/processing-status")
+async def get_admin_collection_processing_status(
+    collection_id: int,
+    current_user: models.User = Depends(get_admin_access),
+    db: Session = Depends(get_db)
+):
+    """
+    Check the processing status of files in an admin collection.
+    
+    Returns:
+        - status: "processing" if any files are still being processed, "completed" if all done
+        - files: List of files with their processing status
+        - summary: Overview of processing progress
+    """
+    try:
+        # Get collection
+        collection = crud.get_collection_with_files(db, collection_id)
+        if not collection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Collection with ID {collection_id} not found"
+            )
+        
+        if not collection.is_admin_only:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This is not an admin collection"
+            )
+        
+        # Check processing status of all files
+        files_status = []
+        all_processed = True
+        
+        for file in collection.files:
+            is_processed = (
+                file.file_metadata and 
+                file.file_metadata.get("is_processed_for_rag", False)
+            )
+            
+            if not is_processed:
+                all_processed = False
+            
+            files_status.append({
+                "file_id": file.id,
+                "filename": file.original_filename,
+                "is_processed": is_processed,
+                "chunk_count": file.file_metadata.get("chunk_count", 0) if file.file_metadata else 0,
+                "processing_error": file.file_metadata.get("processing_error") if file.file_metadata else None
+            })
+        
+        # Calculate summary
+        processed_count = sum(1 for f in files_status if f["is_processed"])
+        total_count = len(files_status)
+        
+        return {
+            "status": "completed" if all_processed else "processing",
+            "message": f"Processing complete: {processed_count}/{total_count} files" if all_processed 
+                      else f"Processing in progress: {processed_count}/{total_count} files completed",
+            "summary": {
+                "total_files": total_count,
+                "processed_files": processed_count,
+                "pending_files": total_count - processed_count
+            },
+            "files": files_status
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error checking processing status: {str(e)}",
+            "files": []
+        }
