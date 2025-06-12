@@ -204,9 +204,7 @@ async def create_admin_collection_with_files(
                         **(file.file_metadata or {}),
                         "is_processed_for_rag": True,
                         "chunk_count": num_docs,
-                        "processed_at": datetime.utcnow().isoformat(),
-                        "collection_id": db_collection.id,
-                        "collection_name": name
+                        "processed_at": datetime.utcnow().isoformat()
                     }
                 })
                 
@@ -742,7 +740,7 @@ async def upload_files_and_create_collection(
                     file_path=file_path,
                     file_size=file_size,
                     mime_type=file.content_type,
-                    file_metadata={"is_admin_upload": True, "collection_id": db_collection.id}
+                    file_metadata={"is_admin_upload": True}
                 )
                 db_file = crud.create_file_storage(db, file_create)
                 
@@ -775,9 +773,7 @@ async def upload_files_and_create_collection(
                         **(db_file.file_metadata or {}),
                         "is_processed_for_rag": True,
                         "chunk_count": num_docs,
-                        "processed_at": datetime.utcnow().isoformat(),
-                        "collection_id": db_collection.id,
-                        "collection_name": name
+                        "processed_at": datetime.utcnow().isoformat()
                     }
                 })
                 

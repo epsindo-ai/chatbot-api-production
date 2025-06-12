@@ -2,6 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from app.db import crud, models, schemas
 from app.db.database import get_db
@@ -10,7 +11,7 @@ from app.services.rag_service import RemoteVectorStoreManager
 from app.services.minio_service import MinioService
 from app.services.ingestion_service import DocumentIngestionService
 from app.config import settings
-from app.utils.string_utils import conversation_collection_name
+from app.utils.string_utils import conversation_collection_name, sanitize_collection_name
 
 router = APIRouter(
     tags=["collections"],
@@ -293,8 +294,8 @@ def remove_file_vectors_from_collection(collection_name: str, file_id: int) -> b
         
         # Check if collection exists
         if not utility.has_collection(safe_collection_name):
-            print(f"Collection {safe_collection_name} does not exist")
-            return False
+            print(f"Collection {safe_collection_name} does not exist (vectors already removed)")
+            return True  # Consider this successful since vectors are effectively removed
         
         # Get the collection
         collection = Collection(safe_collection_name)
@@ -387,9 +388,9 @@ def delete_conversation_collection(
             safe_collection_name = sanitize_collection_name(collection_name)
             success = ingestion_service.delete_collection(safe_collection_name)
             if success:
-                print(f"Deleted Milvus collection: {safe_collection_name}")
+                print(f"Successfully deleted Milvus collection: {safe_collection_name}")
             else:
-                print(f"Warning: Could not delete Milvus collection: {safe_collection_name}")
+                print(f"Milvus collection {safe_collection_name} did not exist (already deleted)")
         except Exception as e:
             print(f"Error deleting Milvus collection: {str(e)}")
             # Continue even if Milvus deletion fails
@@ -485,3 +486,6 @@ def download_file_from_conversation(
             "Content-Length": str(file.file_size) if file.file_size else None
         }
     )
+
+# ConversationDeletionRequest model and delete_all_user_conversations endpoint
+# have been moved to unified_chat.py for better organization

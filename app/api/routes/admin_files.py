@@ -51,6 +51,8 @@ async def list_minio_files(
     List all files in MinIO storage with rich information from database (admin only).
     Optionally filter by prefix.
     Returns rich file information when database record exists, basic MinIO info otherwise.
+    
+    For files that belong to collections, shows all collection associations in the 'collections' field.
     """
     objects = minio_service.list_files(prefix=prefix)
     
@@ -83,6 +85,26 @@ async def list_minio_files(
                 "size_minio": obj.size
             }
             
+            # Get all collections this file belongs to
+            collection_files = crud.get_collection_files_by_file_id(db, db_file.id)
+            collections_info = []
+            
+            for cf in collection_files:
+                collection = crud.get_collection(db, cf.collection_id)
+                if collection:
+                    collections_info.append({
+                        "collection_id": collection.id,
+                        "collection_name": collection.name,
+                        "collection_description": collection.description,
+                        "is_processed": cf.is_processed,
+                        "added_at": cf.added_at.isoformat() if cf.added_at else None,
+                        "is_global_default": collection.is_global_default,
+                        "is_admin_only": collection.is_admin_only
+                    })
+            
+            # Add collections information to file
+            file_dict["collections"] = collections_info
+            
             result.append(file_dict)
         else:
             # File exists only in MinIO - return basic MinIO information
@@ -102,7 +124,8 @@ async def list_minio_files(
                 "conversation_id": None,
                 "id": None,
                 "user_id": None,
-                "created_at": None
+                "created_at": None,
+                "collections": []  # Empty list for orphaned files
             })
     
     return result

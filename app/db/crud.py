@@ -41,6 +41,15 @@ def create_user(db: Session, user: schemas.UserCreate):
     db.refresh(db_user)
     return db_user
 
+def delete_user(db: Session, user_id: int):
+    """Delete a user from the database."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if user:
+        db.delete(user)
+        db.commit()
+        return True
+    return False
+
 # Conversation CRUD operations
 def get_conversation(db: Session, conversation_id: str):
     return db.query(models.Conversation).filter(models.Conversation.id == conversation_id).first()
@@ -120,8 +129,15 @@ def delete_conversation(db: Session, conversation_id: str):
     conversation_type = db_conversation.conversation_type
     
     try:
+        # Break circular dependency by clearing display_file_id reference
+        if db_conversation.display_file_id:
+            print(f"Clearing display_file_id reference for conversation {conversation_id}")
+            db_conversation.display_file_id = None
+            db.commit()
+        
         # Clean up user collection vectors from Milvus if this is a user files conversation
-        if conversation_type == models.ConversationType.USER_FILES:
+        # or if conversation has files (handles data inconsistency cases)
+        if conversation_type == models.ConversationType.USER_FILES or get_conversation_files(db, conversation_id):
             try:
                 from app.utils.string_utils import sanitize_collection_name, conversation_collection_name
                 from app.services.ingestion_service import DocumentIngestionService
@@ -131,8 +147,11 @@ def delete_conversation(db: Session, conversation_id: str):
                 
                 # Delete the user collection from Milvus
                 ingestion_service = DocumentIngestionService()
-                ingestion_service.delete_collection(safe_collection_name)
-                print(f"Deleted user collection from Milvus: {safe_collection_name}")
+                success = ingestion_service.delete_collection(safe_collection_name)
+                if success:
+                    print(f"Successfully deleted user collection from Milvus: {safe_collection_name}")
+                else:
+                    print(f"User collection {safe_collection_name} did not exist in Milvus (already deleted)")
             except Exception as e:
                 print(f"Warning: Could not delete user collection from Milvus: {str(e)}")
                 # Continue with database deletion even if Milvus cleanup fails

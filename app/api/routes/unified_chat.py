@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, 
 from fastapi.responses import StreamingResponse, JSONResponse
 from typing import List, Dict, Any, Optional, Union
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import json
 import uuid
 import time
@@ -131,6 +131,33 @@ class EmbeddingResponse(BaseModel):
     model: str
     dimension: int
     text_count: int
+
+class ConversationDeletionRequest(BaseModel):
+    """Request body for deleting user conversations with granular control."""
+    
+    # File and collection cleanup options
+    delete_files_and_collections: bool = Field(
+        True, 
+        description="Whether to also delete files and collections associated with conversations"
+    )
+    
+    # Conversation type filters
+    delete_regular_chats: bool = Field(
+        True, 
+        description="Whether to delete regular chat conversations (no files or collections)"
+    )
+    delete_user_file_conversations: bool = Field(
+        True, 
+        description="Whether to delete conversations with user-uploaded files and their collections"
+    )
+    delete_global_collection_conversations: bool = Field(
+        True, 
+        description="Whether to delete conversations linked to global collections (admin knowledge bases)"
+    )
+    delete_null_conversations: bool = Field(
+        True, 
+        description="Whether to delete conversations with null/missing conversation types (cleanup orphaned conversations)"
+    )
 
 @router.post("/", response_model=UnifiedChatResponse)
 async def unified_chat(
@@ -755,6 +782,165 @@ async def get_conversation_with_files(
     }
     
     return response_dict
+
+@router.delete("/conversations/all", operation_id="api_chat_delete_all_user_conversations")
+def delete_all_user_conversations(
+    request: ConversationDeletionRequest,
+    current_user: schemas.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete user's own conversations with granular control over conversation types.
+    
+    This will:
+    1. Delete selected types of user's conversations from database
+    2. Optionally delete all files associated with those conversations from MinIO
+    3. Optionally delete user collections from Milvus vector store
+    
+    Conversation Types:
+    - REGULAR: Basic chat conversations (no files or collections)
+    - USER_FILES: Conversations with user-uploaded files and collections
+    - GLOBAL_COLLECTION: Conversations linked to admin knowledge bases
+    - NULL/ORPHANED: Conversations with missing or null conversation types (cleanup)
+    
+    Request Body Options:
+    - delete_files_and_collections: Whether to clean up files and vector collections
+    - delete_regular_chats: Whether to include regular chat conversations
+    - delete_user_file_conversations: Whether to include conversations with user files
+    - delete_global_collection_conversations: Whether to include global collection conversations
+    - delete_null_conversations: Whether to include orphaned conversations with null types
+    
+    Users can only delete their own conversations.
+    This operation cannot be undone.
+    """
+    deleted_stats = {
+        "conversations_deleted": 0,
+        "files_deleted": 0,
+        "collections_deleted": 0,
+        "regular_conversations_deleted": 0,
+        "user_files_conversations_deleted": 0,
+        "global_collection_conversations_deleted": 0,
+        "null_conversations_deleted": 0,  # New: track conversations with null/missing type
+        "errors": []
+    }
+    
+    try:
+        # Get all user's conversations
+        user_conversations = crud.get_user_conversations(db, current_user.id)
+        
+        if not user_conversations:
+            return {
+                "detail": "No conversations found to delete",
+                "deleted_stats": deleted_stats
+            }
+        
+        # Filter conversations based on user's preferences
+        conversations_to_delete = []
+        for conversation in user_conversations:
+            should_delete = False
+            
+            # Handle conversations with null/missing conversation type (cleanup orphaned conversations)
+            if conversation.conversation_type is None and request.delete_null_conversations:
+                should_delete = True
+            elif conversation.conversation_type == models.ConversationType.REGULAR and request.delete_regular_chats:
+                should_delete = True
+            elif conversation.conversation_type == models.ConversationType.USER_FILES and request.delete_user_file_conversations:
+                should_delete = True
+            elif conversation.conversation_type == models.ConversationType.GLOBAL_COLLECTION and request.delete_global_collection_conversations:
+                should_delete = True
+            
+            if should_delete:
+                conversations_to_delete.append(conversation)
+        
+        if not conversations_to_delete:
+            return {
+                "detail": "No conversations matching the specified criteria found to delete",
+                "deleted_stats": deleted_stats
+            }
+        
+        for conversation in conversations_to_delete:
+            try:
+                conversation_type = conversation.conversation_type
+                
+                # Delete associated collections and files if requested
+                if request.delete_files_and_collections:
+                    # Delete user collection from Milvus if it's a USER_FILES conversation
+                    if conversation_type == models.ConversationType.USER_FILES:
+                        try:
+                            collection_name = conversation_collection_name(conversation.id)
+                            safe_collection_name = sanitize_collection_name(collection_name)
+                            
+                            # Initialize ingestion service
+                            ingestion_service = DocumentIngestionService()
+                            success = ingestion_service.delete_collection(safe_collection_name)
+                            # Always count as successful since non-existent collections are effectively "already deleted"
+                            deleted_stats["collections_deleted"] += 1
+                            if success:
+                                print(f"Successfully deleted Milvus collection: {safe_collection_name}")
+                            else:
+                                print(f"Milvus collection {safe_collection_name} did not exist (already deleted)")
+                        except Exception as e:
+                            deleted_stats["errors"].append(f"Error deleting Milvus collection for conversation {conversation.id}: {str(e)}")
+                    
+                    # Delete files associated with conversation (only USER_FILES conversations have files)
+                    if conversation_type == models.ConversationType.USER_FILES:
+                        conversation_files = crud.get_conversation_files(db, conversation.id)
+                        for file in conversation_files:
+                            try:
+                                # Initialize MinIO service
+                                minio_service = MinioService()
+                                minio_service.delete_file(file.file_path)
+                                deleted_stats["files_deleted"] += 1
+                            except Exception as e:
+                                deleted_stats["errors"].append(f"Error deleting file {file.id}: {str(e)}")
+                
+                # Delete conversation (cascade deletes messages and files automatically)
+                success = crud.delete_conversation(db, conversation.id)
+                if success:
+                    deleted_stats["conversations_deleted"] += 1
+                    
+                    # Track by conversation type
+                    if conversation_type is None:
+                        deleted_stats["null_conversations_deleted"] += 1
+                    elif conversation_type == models.ConversationType.REGULAR:
+                        deleted_stats["regular_conversations_deleted"] += 1
+                    elif conversation_type == models.ConversationType.USER_FILES:
+                        deleted_stats["user_files_conversations_deleted"] += 1
+                    elif conversation_type == models.ConversationType.GLOBAL_COLLECTION:
+                        deleted_stats["global_collection_conversations_deleted"] += 1
+                else:
+                    deleted_stats["errors"].append(f"Failed to delete conversation {conversation.id}")
+                    
+            except Exception as e:
+                deleted_stats["errors"].append(f"Error processing conversation {conversation.id}: {str(e)}")
+        
+        # Generate summary message
+        total_deleted = deleted_stats["conversations_deleted"]
+        detail_parts = [f"Successfully deleted {total_deleted} conversations"]
+        
+        if deleted_stats["regular_conversations_deleted"] > 0:
+            detail_parts.append(f"{deleted_stats['regular_conversations_deleted']} regular chat conversations")
+        if deleted_stats["user_files_conversations_deleted"] > 0:
+            detail_parts.append(f"{deleted_stats['user_files_conversations_deleted']} user file conversations")
+        if deleted_stats["global_collection_conversations_deleted"] > 0:
+            detail_parts.append(f"{deleted_stats['global_collection_conversations_deleted']} global collection conversations")
+        if deleted_stats["null_conversations_deleted"] > 0:
+            detail_parts.append(f"{deleted_stats['null_conversations_deleted']} orphaned/null conversations")
+        
+        detail_message = detail_parts[0]
+        if len(detail_parts) > 1:
+            detail_message += f" ({', '.join(detail_parts[1:])})"
+        
+        return {
+            "detail": detail_message,
+            "deleted_stats": deleted_stats
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete conversations: {str(e)}"
+        )
 
 @router.delete("/conversations/{conversation_id}", response_model=Dict[str, Any])
 async def delete_conversation(
