@@ -90,6 +90,10 @@ class UserInfo(BaseModel):
     full_name: Optional[str] = None
     role: str
     is_active: bool = True
+    # Temporary password status fields
+    must_reset_password: bool = False
+    is_temporary_password: bool = False
+    temp_password_expires_at: Optional[str] = None
 
 # Admin user management schemas
 class AdminUserCreate(BaseModel):

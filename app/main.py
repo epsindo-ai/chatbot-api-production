@@ -16,6 +16,7 @@ from app.db.database import engine, get_db, Base
 from app.db import models
 from app.db.models import UserRole
 from app.services.admin_config_service import AdminConfigService
+from app.services.super_admin_service import SuperAdminService
 
 # Create database tables if they don't exist
 Base.metadata.create_all(bind=engine)
@@ -93,7 +94,7 @@ async def startup_db_client():
     """
     Startup event to run maintenance tasks:
     1. Ensure all users have roles assigned
-    2. Ensure at least one LLM configuration exists (deprecated by unified admin_config)
+    2. Initialize the single super admin user
     3. Ensure default admin configurations are in the database
     """
     # Create a database session
@@ -104,7 +105,13 @@ async def startup_db_client():
     try:
         # Run maintenance tasks
         ensure_user_roles(db)
-        AdminConfigService.initialize_default_configs(db) # Added call
+        
+        # Initialize the single super admin user
+        SuperAdminService.initialize_super_admin(db)
+        
+        # Initialize default admin configurations
+        AdminConfigService.initialize_default_configs(db)
+        
         db.commit() # Commit any changes made by initialization tasks
     except Exception as e:
         print(f"Startup error: {e}")

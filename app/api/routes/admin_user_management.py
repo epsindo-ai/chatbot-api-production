@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func, or_
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
+from datetime import datetime, timedelta
 
 from app.db import crud, models, schemas
 from app.db.database import get_db
@@ -12,7 +14,7 @@ from app.utils.string_utils import sanitize_collection_name, conversation_collec
 
 router = APIRouter(
     prefix="/users",
-    tags=["admin-user-management"],
+    tags=["admin-users"],
 )
 
 # Initialize services
@@ -44,6 +46,10 @@ class BulkDeleteUsersRequest(BaseModel):
     delete_conversations: bool = True
     delete_collections: bool = True
 
+class UserRoleUpdateRequest(BaseModel):
+    username: str
+    role: models.UserRole
+
 @router.get("/", response_model=List[UserStatsResponse])
 async def list_users_with_stats(
     skip: int = Query(0, description="Number of users to skip"),
@@ -62,7 +68,12 @@ async def list_users_with_stats(
     - Storage usage information
     - Last activity timestamp
     
-    This helps admins make informed decisions about user management.
+    Users are automatically sorted by role priority:
+    1. Super Admin users (shown first)
+    2. Admin users (shown second)
+    3. Regular users (shown last)
+    
+    This helps admins quickly find and manage other admin accounts.
     """
     try:
         # Get users with optional filtering
@@ -70,7 +81,22 @@ async def list_users_with_stats(
         if active_only:
             query = query.filter(models.User.is_active == True)
         
-        users = query.offset(skip).limit(limit).all()
+        # Get all users first, then apply pagination after sorting
+        all_users = query.all()
+        
+        # Sort users by role priority: SUPER_ADMIN, ADMIN, then USER
+        def role_priority(user):
+            if user.role == models.UserRole.SUPER_ADMIN:
+                return 0
+            elif user.role == models.UserRole.ADMIN:
+                return 1
+            else:
+                return 2
+        
+        sorted_users = sorted(all_users, key=role_priority)
+        
+        # Apply pagination after sorting
+        users = sorted_users[skip:skip+limit]
         
         if not include_stats:
             # Return basic user info only
@@ -262,8 +288,7 @@ async def bulk_delete_users(
         }
     }
     
-    # Check super admin count first (don't allow deletion of all super admins)
-    super_admin_count = db.query(models.User).filter(models.User.role == models.UserRole.SUPER_ADMIN).count()
+    # Check super admin count first (prevent deletion of super admin)
     super_admin_users_to_delete = []
     admin_users_to_delete = []
     
@@ -275,11 +300,11 @@ async def bulk_delete_users(
             elif user.role == models.UserRole.ADMIN:
                 admin_users_to_delete.append(user_id)
     
-    # Prevent deletion if it would remove all super admins
-    if len(super_admin_users_to_delete) >= super_admin_count:
+    # Prevent deletion of super admin user
+    if super_admin_users_to_delete:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete all super admin users. At least one super admin must remain."
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete super admin user. Super admin is permanent and cannot be deleted."
         )
     
     for user_id in request.user_ids:
@@ -421,6 +446,243 @@ async def bulk_delete_users(
         "results": deletion_results
     }
 
+@router.post("/update-role", response_model=UserStatsResponse)
+async def update_user_role(
+    request: UserRoleUpdateRequest,
+    current_user: models.User = Depends(get_super_admin_access),
+    db: Session = Depends(get_db)
+):
+    """
+    Update a user's role - Super Admin only
+    
+    Note: Cannot promote users to SUPER_ADMIN role. 
+    Only one super admin is allowed and is created during deployment.
+    """
+    # Find the user
+    user = crud.get_user_by_username(db, request.username)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User '{request.username}' not found"
+        )
+    
+    # Prevent promotion to super admin via API
+    if request.role == models.UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot promote users to super admin via API. Only one super admin is allowed and is created during deployment."
+        )
+    
+    # Check if trying to change to the same role
+    if user.role == request.role:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"User '{request.username}' already has the role '{request.role.value}'"
+        )
+    
+    # Prevent self-role changes
+    if user.username == current_user.username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot change your own role"
+        )
+    
+    # Prevent demotion of the super admin user
+    if user.role == models.UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot demote the super admin user. Super admin role is permanent."
+        )
+    
+    try:
+        # Update the user role
+        user.role = request.role
+        db.commit()
+        db.refresh(user)
+        
+        # Get updated user stats
+        conversations_count = db.query(models.Conversation).filter(
+            models.Conversation.user_id == user.id
+        ).count()
+        
+        user_files = db.query(models.FileStorage).filter(
+            models.FileStorage.user_id == user.id
+        ).all()
+        files_count = len(user_files)
+        total_file_size = sum(file.file_size for file in user_files) if user_files else 0
+        total_file_size_mb = round(total_file_size / (1024 * 1024), 2)
+        
+        collections_count = db.query(models.Collection).filter(
+            models.Collection.user_id == user.id
+        ).count()
+        
+        last_conversation = db.query(models.Conversation).filter(
+            models.Conversation.user_id == user.id
+        ).order_by(models.Conversation.updated_at.desc()).first()
+        
+        last_activity = None
+        if last_conversation and last_conversation.updated_at:
+            last_activity = last_conversation.updated_at.isoformat()
+        elif user.created_at:
+            last_activity = user.created_at.isoformat()
+        
+        return UserStatsResponse(
+            user_id=user.id,
+            username=user.username,
+            email=user.email,
+            role=user.role.value,
+            is_active=user.is_active,
+            created_at=user.created_at.isoformat() if user.created_at else "",
+            conversations_count=conversations_count,
+            files_count=files_count,
+            collections_count=collections_count,
+            total_file_size_mb=total_file_size_mb,
+            last_activity=last_activity
+        )
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update user role: {str(e)}"
+        )
+
+@router.get("/stats", response_model=Dict[str, Any])
+async def get_comprehensive_user_stats(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_admin_access)
+):
+    """
+    Get comprehensive user statistics including detailed breakdowns.
+    
+    Returns extensive statistics about users, their activity, and system usage
+    to help administrators understand system health and user engagement.
+    """
+    try:
+        # Basic user counts
+        total_users = db.query(models.User).count()
+        active_users = db.query(models.User).filter(models.User.is_active == True).count()
+        inactive_users = total_users - active_users
+        
+        # Role-based counts
+        user_users = db.query(models.User).filter(models.User.role == models.UserRole.USER).count()
+        admin_users = db.query(models.User).filter(models.User.role == models.UserRole.ADMIN).count()
+        super_admin_users = db.query(models.User).filter(models.User.role == models.UserRole.SUPER_ADMIN).count()
+        
+        # Active users by role
+        active_user_users = db.query(models.User).filter(
+            models.User.role == models.UserRole.USER,
+            models.User.is_active == True
+        ).count()
+        active_admin_users = db.query(models.User).filter(
+            models.User.role == models.UserRole.ADMIN,
+            models.User.is_active == True
+        ).count()
+        active_super_admin_users = db.query(models.User).filter(
+            models.User.role == models.UserRole.SUPER_ADMIN,
+            models.User.is_active == True
+        ).count()
+        
+        # Conversation statistics
+        total_conversations = db.query(models.Conversation).count()
+        
+        # Recent activity (last 30 days)
+        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        recent_conversations = db.query(models.Conversation).filter(
+            models.Conversation.updated_at >= thirty_days_ago
+        ).count()
+        
+        # Users with recent activity
+        users_with_recent_activity = db.query(models.User).join(models.Conversation).filter(
+            models.Conversation.updated_at >= thirty_days_ago
+        ).distinct().count()
+        
+        # File statistics
+        total_files = db.query(models.FileStorage).count()
+        total_file_size = db.query(func.sum(models.FileStorage.file_size)).scalar() or 0
+        total_file_size_gb = round(total_file_size / (1024 * 1024 * 1024), 2)
+        
+        # Collection statistics
+        total_collections = db.query(models.Collection).count()
+        admin_collections = db.query(models.Collection).filter(
+            models.Collection.is_admin_only == True
+        ).count()
+        user_collections = total_collections - admin_collections
+        
+        # User registration trends (last 7 days)
+        seven_days_ago = datetime.utcnow() - timedelta(days=7)
+        new_users_last_week = db.query(models.User).filter(
+            models.User.created_at >= seven_days_ago
+        ).count()
+        
+        # Users by creation timeframe
+        one_day_ago = datetime.utcnow() - timedelta(days=1)
+        new_users_today = db.query(models.User).filter(
+            models.User.created_at >= one_day_ago
+        ).count()
+        
+        # Identify inactive users (no activity in 30+ days)
+        inactive_threshold = thirty_days_ago
+        potentially_inactive_users = []
+        
+        # Get users with no recent conversations
+        users_no_recent_activity = db.query(models.User).outerjoin(models.Conversation).filter(
+            or_(
+                models.Conversation.updated_at < inactive_threshold,
+                models.Conversation.updated_at.is_(None)
+            )
+        ).distinct().count()
+        
+        return {
+            "summary": {
+                "total_users": total_users,
+                "active_users": active_users,
+                "inactive_users": inactive_users,
+                "total_conversations": total_conversations,
+                "total_files": total_files,
+                "total_collections": total_collections
+            },
+            "users_by_role": {
+                "regular_users": user_users,
+                "admin_users": admin_users, 
+                "super_admin_users": super_admin_users
+            },
+            "active_users_by_role": {
+                "active_regular_users": active_user_users,
+                "active_admin_users": active_admin_users,
+                "active_super_admin_users": active_super_admin_users
+            },
+            "activity_metrics": {
+                "users_with_recent_activity_30d": users_with_recent_activity,
+                "conversations_last_30d": recent_conversations,
+                "users_potentially_inactive": users_no_recent_activity,
+                "activity_rate_percentage": round((users_with_recent_activity / total_users * 100), 2) if total_users > 0 else 0
+            },
+            "storage_metrics": {
+                "total_files": total_files,
+                "total_file_size_gb": total_file_size_gb,
+                "admin_collections": admin_collections,
+                "user_collections": user_collections
+            },
+            "registration_trends": {
+                "new_users_today": new_users_today,
+                "new_users_last_7d": new_users_last_week,
+                "growth_rate_7d": round((new_users_last_week / total_users * 100), 2) if total_users > 0 else 0
+            },
+            "system_health": {
+                "admin_coverage": round((admin_users / total_users * 100), 2) if total_users > 0 else 0,
+                "active_user_ratio": round((active_users / total_users * 100), 2) if total_users > 0 else 0,
+                "avg_conversations_per_user": round(total_conversations / total_users, 2) if total_users > 0 else 0,
+                "avg_files_per_user": round(total_files / total_users, 2) if total_users > 0 else 0
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve user statistics: {str(e)}"
+        )
+
 @router.delete("/{user_id}")
 async def delete_user(
     user_id: int,
@@ -471,14 +733,12 @@ async def delete_user(
                 detail="Cannot delete yourself"
             )
         
-        # Check if this is the last super admin user
-        if user_to_delete.role == models.UserRole.SUPER_ADMIN:
-            super_admin_count = db.query(models.User).filter(models.User.role == models.UserRole.SUPER_ADMIN).count()
-            if super_admin_count <= 1:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot delete the last super admin user"
-                )
+    # Prevent deletion of the super admin user - super admin is permanent
+    if user_to_delete.role == models.UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete the super admin user. Super admin is permanent and cannot be deleted."
+        )
     
     deleted_stats = {
         "user_id": user_id,
@@ -840,7 +1100,7 @@ async def delete_user_all_conversations(
 @router.patch("/{user_id}/deactivate")
 async def deactivate_user(
     user_id: int,
-    current_user: models.User = Depends(get_super_admin_access),
+    current_user: models.User = Depends(get_admin_access),
     db: Session = Depends(get_db)
 ):
     """
@@ -853,6 +1113,11 @@ async def deactivate_user(
     4. Maintains data integrity for conversations and collections
     
     This is the recommended approach for temporary user management.
+    
+    Permissions:
+    - Admins can deactivate regular users
+    - Admins cannot deactivate other admins (requires super admin)
+    - Super admins can deactivate anyone except themselves
     """
     # Get user info
     user_to_deactivate = crud.get_user(db, user_id)
@@ -869,17 +1134,20 @@ async def deactivate_user(
             detail="Cannot deactivate yourself"
         )
     
-    # Prevent deactivation of the last super admin user
+    # Permission check: Only super admins can deactivate other admins
+    if (user_to_deactivate.role in [models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN] 
+        and current_user.role != models.UserRole.SUPER_ADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only super admins can deactivate admin users. Regular admins can only deactivate regular users."
+        )
+    
+    # Prevent deactivation of the super admin user
     if user_to_deactivate.role == models.UserRole.SUPER_ADMIN:
-        super_admin_count = db.query(models.User).filter(
-            models.User.role == models.UserRole.SUPER_ADMIN,
-            models.User.is_active == True
-        ).count()
-        if super_admin_count <= 1:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot deactivate the last active super admin user"
-            )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot deactivate the super admin user. Super admin must remain active."
+        )
     
     # Also prevent deactivating admin users if they are the only admin left
     elif user_to_deactivate.role == models.UserRole.ADMIN:
@@ -923,7 +1191,7 @@ async def deactivate_user(
 @router.patch("/{user_id}/reactivate")
 async def reactivate_user(
     user_id: int,
-    current_user: models.User = Depends(get_super_admin_access),
+    current_user: models.User = Depends(get_admin_access),
     db: Session = Depends(get_db)
 ):
     """
@@ -933,6 +1201,11 @@ async def reactivate_user(
     1. Sets the user as active (allows login)
     2. All user data and relationships remain intact
     3. User can immediately resume using the system
+    
+    Permissions:
+    - Admins can reactivate regular users  
+    - Admins cannot reactivate other admins (requires super admin)
+    - Super admins can reactivate anyone
     """
     # Get user info
     user_to_reactivate = crud.get_user(db, user_id)
@@ -940,6 +1213,14 @@ async def reactivate_user(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"User with ID {user_id} not found"
+        )
+    
+    # Permission check: Only super admins can reactivate other admins
+    if (user_to_reactivate.role in [models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN] 
+        and current_user.role != models.UserRole.SUPER_ADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only super admins can reactivate admin users. Regular admins can only reactivate regular users."
         )
     
     if user_to_reactivate.is_active:
@@ -986,10 +1267,11 @@ async def list_inactive_users(
     Inactive criteria:
     - No conversations updated in the specified timeframe
     - Includes both active and already deactivated users
-    - Sorted by last activity (oldest first)
-    """
-    from datetime import datetime, timedelta
     
+    Results are sorted by:
+    1. Role priority (Super Admin, Admin, then Regular users)
+    2. Last activity date (oldest first within each role group)
+    """
     try:
         cutoff_date = datetime.utcnow() - timedelta(days=days_inactive)
         
@@ -1046,8 +1328,15 @@ async def list_inactive_users(
                     last_activity=last_activity.isoformat() if last_activity else None
                 ))
         
-        # Sort by last activity (oldest first)
-        inactive_users.sort(key=lambda x: x.last_activity or "")
+        # Sort by role priority first, then by last activity (oldest first)
+        def sort_key(user_stats):
+            # Role priority: SUPER_ADMIN=0, ADMIN=1, USER=2
+            role_priority = 0 if user_stats.role == "super_admin" else (1 if user_stats.role == "admin" else 2)
+            # Use last_activity for secondary sort (oldest first)
+            activity_date = user_stats.last_activity or ""
+            return (role_priority, activity_date)
+        
+        inactive_users.sort(key=sort_key)
         
         return inactive_users
         

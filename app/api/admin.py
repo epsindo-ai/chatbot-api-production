@@ -45,6 +45,13 @@ async def update_user_role(
             detail=f"User '{request.username}' not found"
         )
     
+    # Prevent promotion to super admin via API
+    if request.role == UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot promote users to super admin via API. Only one super admin is allowed and is created during deployment."
+        )
+    
     # Check if trying to change to the same role
     if user.role == request.role:
         raise HTTPException(
@@ -59,19 +66,12 @@ async def update_user_role(
             detail="Cannot change your own role"
         )
     
-    # If demoting from super admin, ensure at least one super admin remains
-    if user.role == UserRole.SUPER_ADMIN and request.role != UserRole.SUPER_ADMIN:
-        super_admin_count = db.query(models.User).filter(models.User.role == UserRole.SUPER_ADMIN).count()
-        if super_admin_count <= 1:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot demote the last super admin user"
-            )
-    
-    # If promoting to super admin, add warning about privileges
-    if request.role == UserRole.SUPER_ADMIN and user.role != UserRole.SUPER_ADMIN:
-        # Log this critical action
-        print(f"WARNING: User '{user.username}' is being promoted to SUPER_ADMIN by '{current_user.username}'")
+    # Prevent demotion of the super admin user
+    if user.role == UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot demote the super admin user. Super admin role is permanent."
+        )
     
     # Update the user role
     user.role = request.role

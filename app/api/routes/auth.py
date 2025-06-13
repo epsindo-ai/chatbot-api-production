@@ -192,13 +192,21 @@ async def get_current_user_info(current_user: models.User = Depends(get_current_
     Get information about the currently authenticated user.
     This endpoint can be used to verify authentication and get user details.
     """
+    # Format temp_password_expires_at as ISO string if it exists
+    temp_expires_str = None
+    if current_user.temp_password_expires_at:
+        temp_expires_str = current_user.temp_password_expires_at.isoformat()
+    
     return {
         "user_id": current_user.id,
         "username": current_user.username,
         "email": current_user.email,
         "full_name": current_user.full_name,
         "role": current_user.role.value,
-        "is_active": current_user.is_active
+        "is_active": current_user.is_active,
+        "must_reset_password": current_user.must_reset_password,
+        "is_temporary_password": current_user.is_temporary_password,
+        "temp_password_expires_at": temp_expires_str
     }
 
 @router.post("/change-password", response_model=Dict[str, Any])
