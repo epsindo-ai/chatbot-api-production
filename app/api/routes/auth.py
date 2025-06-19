@@ -211,18 +211,20 @@ async def get_current_user_info(current_user: models.User = Depends(get_current_
 
 @router.post("/change-password", response_model=Dict[str, Any])
 async def change_password(
-    password_data: schemas.PasswordChangeRequest,
+    password_data: schemas.SimplePasswordChangeRequest,
     current_user: models.User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """
     Change password from temporary to permanent. Required for users with temporary passwords.
+    Uses token authentication - no need to re-enter current password.
     """
-    # Verify current password
-    if not authenticate_user(current_user.username, password_data.current_password, db):
+    # Optional: Add a check to ensure this is being used appropriately
+    # (Though we allow it for all users for flexibility)
+    if current_user.is_temporary_password and crud.is_user_password_expired(current_user):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Current password is incorrect"
+            detail="Temporary password has expired. Please contact an administrator for a password reset."
         )
     
     # Check if passwords match

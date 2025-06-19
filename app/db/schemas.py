@@ -117,6 +117,11 @@ class PasswordChangeRequest(BaseModel):
     new_password: str
     confirm_password: str
 
+class SimplePasswordChangeRequest(BaseModel):
+    """Simplified schema for password change using token authentication only"""
+    new_password: str
+    confirm_password: str
+
 class UserCreateResponse(BaseModel):
     """Response schema for admin user creation"""
     user_id: int

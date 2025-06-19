@@ -360,7 +360,6 @@ async def bulk_delete_users(
                                 safe_collection_name = sanitize_collection_name(collection_name)
                                 ingestion_service.delete_collection(safe_collection_name)
                                 user_deletion_stats["milvus_collections_deleted"] += 1
-                                user_deletion_stats["collections_deleted"] += 1  # Count conversation collections properly
                             except Exception as e:
                                 user_deletion_stats["errors"].append(f"Error deleting Milvus collection for conversation {conversation.id}: {str(e)}")
                         
@@ -767,19 +766,10 @@ async def delete_user(
             global_collections = [c for c in user_collections if c.is_global_default or c.is_admin_only]
             regular_collections = [c for c in user_collections if not (c.is_global_default or c.is_admin_only)]
             
-            # Count conversation collections (USER_FILES conversations have associated Milvus collections)
-            conversation_collections_count = len([c for c in user_conversations if c.conversation_type == models.ConversationType.USER_FILES]) if delete_collections else 0
-            
-            # IMPORTANT: Admin collections (even regular ones) cannot be deleted via user deletion
-            # Only conversation collections can be deleted via this endpoint
-            # So total collections to delete = only conversation collections
-            total_milvus_collections = conversation_collections_count
-            
             deleted_stats.update({
                 "files_deleted": len(user_files),
                 "conversations_deleted": len(user_conversations),
-                "collections_deleted": total_milvus_collections,  # Total collections to be deleted
-                "milvus_collections_deleted": total_milvus_collections,  # Same as collections_deleted since all collections are in Milvus
+                "collections_deleted": len(regular_collections),  # Only regular collections can be deleted
                 "global_default_collections_found": len(global_collections)
             })
             
@@ -810,9 +800,6 @@ async def delete_user(
             if global_collections:
                 deleted_stats["warnings"].append(f"User owns {len(global_collections)} global collection(s). Global collections cannot be deleted via user deletion - only conversations using them will be unlinked.")
             
-            if regular_collections:
-                deleted_stats["warnings"].append(f"User owns {len(regular_collections)} regular admin collection(s). Admin collections cannot be deleted via user deletion - only conversations using them will be unlinked.")
-            
             if linked_conversations_count > 0:
                 deleted_stats["warnings"].append(f"{linked_conversations_count} conversations would be unlinked from user's collections.")
             
@@ -822,9 +809,7 @@ async def delete_user(
                 "impact_summary": {
                     "files_to_delete": len(user_files),
                     "conversations_to_delete": len(user_conversations),
-                    "collections_to_delete": total_milvus_collections,  # Now consistent with deleted_stats - only conversation collections
-                    "admin_collections_to_delete": 0,  # Admin collections cannot be deleted via user deletion
-                    "conversation_collections_to_delete": conversation_collections_count,  # Only conversation collections can be deleted
+                    "collections_to_delete": len(regular_collections),  # Only regular collections
                     "global_collections_found": len(global_collections),
                     "storage_to_free_mb": total_file_size_mb,
                     "conversations_to_unlink": linked_conversations_count
@@ -861,7 +846,6 @@ async def delete_user(
                             safe_collection_name = sanitize_collection_name(collection_name)
                             ingestion_service.delete_collection(safe_collection_name)
                             deleted_stats["milvus_collections_deleted"] += 1
-                            deleted_stats["collections_deleted"] += 1  # Count conversation collections properly
                         except Exception as e:
                             deleted_stats["errors"].append(f"Error deleting Milvus collection for conversation {conversation.id}: {str(e)}")
                     
@@ -869,7 +853,7 @@ async def delete_user(
                 except Exception as e:
                     deleted_stats["errors"].append(f"Error processing conversation {conversation.id}: {str(e)}")
         
-        # 3. Handle user's admin collections (global collections cannot be deleted here)
+        # 3. Handle user's admin collections (global collections cannot be deleted)
         if delete_collections:
             user_collections = db.query(models.Collection).filter(models.Collection.user_id == user_id).all()
             for collection in user_collections:
@@ -1370,8 +1354,26 @@ async def create_user_with_temporary_password(
 ):
     """
     Create a new user account with a temporary password that must be changed on first login.
-    Only admins can create user accounts.
+    
+    Permissions:
+    - Admins can create regular users (USER role)
+    - Only super admins can create admin users (ADMIN role)
+    - Super admin users cannot be created via API
     """
+    # Role-based creation restrictions (matching role update security model)
+    if user_data.role == models.UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot create super admin users via API. Only one super admin is allowed and is created during deployment."
+        )
+    
+    # Only super admins can create admin accounts
+    if user_data.role == models.UserRole.ADMIN and current_user.role != models.UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only super admins can create admin accounts. Regular admins can only create regular user accounts."
+        )
+    
     # Check if username already exists
     existing_user = crud.get_user_by_username(db, user_data.username)
     if existing_user:
@@ -1388,7 +1390,7 @@ async def create_user_with_temporary_password(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Email already registered"
             )
-    
+
     try:
         # Create user with temporary password
         new_user = crud.create_user_with_temp_password(db, user_data)

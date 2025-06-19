@@ -150,7 +150,8 @@ def create_conversation(db: Session, user_id: int, meta_data: dict = None):
 
 def create_empty_conversation(db: Session, user_id: int, expires_in_hours: int = 24):
     """Creates a new empty conversation with an expiration time."""
-    expires_at_datetime = datetime.utcnow() + timedelta(hours=expires_in_hours)
+    from datetime import timezone
+    expires_at_datetime = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
     db_conversation = models.Conversation(
         id=str(uuid.uuid4()),
         user_id=user_id,
@@ -772,8 +773,8 @@ def create_conversation_with_global_collection(db: Session, user_id: int, meta_d
                 return None  # Collection not found
         
         # Create conversation with link to the collection and 24-hour expiration
-        from datetime import datetime, timedelta
-        expires_at_datetime = datetime.utcnow() + timedelta(hours=24)
+        from datetime import datetime, timedelta, timezone
+        expires_at_datetime = datetime.now(timezone.utc) + timedelta(hours=24)
         print(f"DEBUG: Creating conversation with linked_global_collection_id={collection.id}, expires_at={expires_at_datetime}")
         db_conversation = models.Conversation(
             id=str(uuid.uuid4()),
@@ -800,8 +801,8 @@ def create_conversation_with_global_collection(db: Session, user_id: int, meta_d
 
 def create_conversation_for_user_files(db: Session, user_id: int, meta_data: dict = None):
     """Create a new conversation specifically for user-uploaded files with 24-hour expiration."""
-    from datetime import datetime, timedelta
-    expires_at_datetime = datetime.utcnow() + timedelta(hours=24)
+    from datetime import datetime, timedelta, timezone
+    expires_at_datetime = datetime.now(timezone.utc) + timedelta(hours=24)
     
     db_conversation = models.Conversation(
         id=str(uuid.uuid4()),
