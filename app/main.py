@@ -124,14 +124,6 @@ async def read_root():
     """Return a simple message for the root endpoint."""
     return HTMLResponse(content="<html><body><h1>API Server Running</h1><p>Use /docs for API documentation</p></body></html>")
 
-@app.get("/admin")
-async def read_admin():
-    """Return information about admin endpoints."""
-    return JSONResponse(content={
-        "message": "Admin endpoints are available at /api/admin/*",
-        "docs": "/docs"
-    })
-
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
