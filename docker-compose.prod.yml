@@ -1,0 +1,134 @@
+# Simplified Docker Compose for production deployment
+# This version assumes external LLM and embedding services
+version: '3.8'
+
+services:
+  # Main FastAPI application
+  api:
+    build: .
+    container_name: llm-chatbot-api
+    ports:
+      - "35430:35430"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      milvus:
+        condition: service_started
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          memory: 40G
+          cpus: '20.0'
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: llm-chatbot-postgres
+    env_file:
+      - .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "35433:5432"
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+
+  # MinIO Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: llm-chatbot-minio
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+
+  # Milvus Vector Database
+  milvus:
+    image: milvusdb/milvus:latest
+    container_name: llm-chatbot-milvus
+    command: ["milvus", "run", "standalone"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+      - MINIO_ADDRESS=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "19530:19530"
+    depends_on:
+      - etcd
+      - minio
+    restart: unless-stopped
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+
+  # etcd for Milvus
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: llm-chatbot-etcd
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    volumes:
+      - etcd_data:/etcd
+    restart: unless-stopped
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+
+volumes:
+  postgres_data:
+  minio_data:
+  milvus_data:
+  etcd_data:
+
+networks:
+  app-network:
+    driver: bridge

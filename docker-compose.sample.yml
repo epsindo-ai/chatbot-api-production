@@ -1,0 +1,171 @@
+# Sample docker-compose.yml for LLM Chatbot API
+# Copy this to your deployment directory and modify as needed
+
+version: '3.8'
+
+services:
+  # Main FastAPI application
+  api:
+    image: your-registry/llm-chatbot-api:latest  # Replace with your image registry
+    container_name: llm-chatbot-api
+    ports:
+      - "35430:35430"
+    environment:
+      # App Settings
+      - APP_NAME=LLM Chatbot API
+      
+      # JWT Settings - CHANGE THESE!
+      - SECRET_KEY=your_super_secure_jwt_secret_key_minimum_32_characters_long
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=2400
+      
+      # Database Settings
+      - POSTGRES_USER=chatbot_user
+      - POSTGRES_PASSWORD=secure_db_password_change_this
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=chatbot
+      
+      # LLM Settings - Configure based on your setup
+      - OPENAI_API_KEY=EMPTY
+      - OPENAI_API_BASE=http://your-llm-server:port/v1
+      - LLM_MODEL=your-model-name
+      - LLM_MAX_TOKENS=2000
+      - LLM_TEMPERATURE=0.1
+      - LLM_TOP_P=0.95
+      - LLM_CONFIG_NAME=Production LLM Configuration
+      
+      # MinIO Settings
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=secure_minio_password_change_this
+      - MINIO_DEFAULT_BUCKET=documents
+      - MINIO_SECURE=false
+      
+      # RAG Settings
+      - REMOTE_EMBEDDER_URL=http://your-embedder-server:port/embeddings
+      - MILVUS_URI=http://milvus:19530
+      - DEFAULT_COLLECTION=default_collection
+      - RETRIEVER_TOP_K=10
+      
+      # Infinity Embeddings Settings
+      - INFINITY_EMBEDDINGS_MODEL=stella-en-1.5B
+      - INFINITY_API_URL=http://your-infinity-server:port
+      
+      # Super Admin Configuration - CHANGE THESE!
+      - SUPER_ADMIN_USERNAME=admin
+      - SUPER_ADMIN_PASSWORD=secure_admin_password_change_this
+      - SUPER_ADMIN_EMAIL=admin@yourcompany.com
+      - SUPER_ADMIN_FULL_NAME=System Administrator
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      milvus:
+        condition: service_started
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs  # Optional: for persistent logs
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:35430/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: llm-chatbot-postgres
+    environment:
+      - POSTGRES_USER=chatbot_user
+      - POSTGRES_PASSWORD=secure_db_password_change_this
+      - POSTGRES_DB=chatbot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"  # Optional: expose for external access
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatbot_user -d chatbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # MinIO Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: llm-chatbot-minio
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=secure_minio_password_change_this
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # MinIO API
+      - "9001:9001"   # MinIO Console
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Milvus Vector Database
+  milvus:
+    image: milvusdb/milvus:latest
+    container_name: llm-chatbot-milvus
+    command: ["milvus", "run", "standalone"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+      - MINIO_ADDRESS=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=secure_minio_password_change_this
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "19530:19530"  # Milvus gRPC port
+      - "9091:9091"    # Milvus HTTP port
+    depends_on:
+      - etcd
+      - minio
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # etcd for Milvus
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: llm-chatbot-etcd
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    volumes:
+      - etcd_data:/etcd
+    ports:
+      - "2379:2379"   # Optional: expose for external access
+    restart: unless-stopped
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+  minio_data:
+  milvus_data:
+  etcd_data:
+
+networks:
+  app-network:
+    driver: bridge

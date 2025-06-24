@@ -18,8 +18,8 @@ from app.db.models import UserRole
 from app.services.admin_config_service import AdminConfigService
 from app.services.super_admin_service import SuperAdminService
 
-# Create database tables if they don't exist
-Base.metadata.create_all(bind=engine)
+# Note: Database tables are created by Alembic migrations, not here
+# This ensures proper version tracking and schema consistency
 
 app = FastAPI(
     title=settings.APP_NAME,
