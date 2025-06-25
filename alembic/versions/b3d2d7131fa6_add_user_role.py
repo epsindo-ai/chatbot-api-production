@@ -25,7 +25,12 @@ def upgrade():
     op.add_column('llm_configs', sa.Column('context_window', sa.Integer(), nullable=True))
     op.add_column('llm_configs', sa.Column('description', sa.Text(), nullable=True))
     op.add_column('llm_configs', sa.Column('extra_params', sa.JSON(), nullable=True))
-    op.add_column('users', sa.Column('role', sa.Enum('USER', 'ADMIN', name='userrole'), nullable=True))
+    
+    # Create the enum type first
+    userrole_enum = sa.Enum('USER', 'ADMIN', name='userrole')
+    userrole_enum.create(op.get_bind(), checkfirst=True)
+    
+    op.add_column('users', sa.Column('role', userrole_enum, nullable=True))
     op.add_column('users', sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True))
     op.add_column('users', sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True))
     # ### end Alembic commands ###
@@ -36,6 +41,11 @@ def downgrade():
     op.drop_column('users', 'updated_at')
     op.drop_column('users', 'created_at')
     op.drop_column('users', 'role')
+    
+    # Drop the enum type
+    userrole_enum = sa.Enum('USER', 'ADMIN', name='userrole')
+    userrole_enum.drop(op.get_bind(), checkfirst=True)
+    
     op.drop_column('llm_configs', 'extra_params')
     op.drop_column('llm_configs', 'description')
     op.drop_column('llm_configs', 'context_window')

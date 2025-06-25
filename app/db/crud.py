@@ -361,7 +361,12 @@ def update_llm_config(db: Session, config: schemas.LLMConfigUpdate):
         for key, value in update_data.items():
             if value is not None:  # Only update if value is not None
                 set_parts.append(f"{key} = :{key}")
-                params[key] = value
+                # Serialize extra_params dict to JSON string for PostgreSQL
+                if key == "extra_params" and isinstance(value, dict):
+                    import json
+                    params[key] = json.dumps(value)
+                else:
+                    params[key] = value
         
         if not set_parts:
             return existing_config  # No valid changes to make
@@ -398,6 +403,10 @@ def create_llm_config(db: Session, config: schemas.LLMConfigCreate):
             VALUES (:name, :model_name, :temperature, :top_p, :max_tokens, :description, :extra_params, :enable_thinking)
             """)
             
+            # Serialize extra_params dict to JSON string for PostgreSQL
+            import json
+            extra_params_json = json.dumps(config.extra_params) if isinstance(config.extra_params, dict) else config.extra_params
+            
             db.execute(
                 sql,
                 {
@@ -407,7 +416,7 @@ def create_llm_config(db: Session, config: schemas.LLMConfigCreate):
                     "top_p": config.top_p,
                     "max_tokens": config.max_tokens,
                     "description": config.description,
-                    "extra_params": config.extra_params,
+                    "extra_params": extra_params_json,
                     "enable_thinking": config.enable_thinking
                 }
             )

@@ -85,7 +85,8 @@ def upgrade():
                comment='Stores the retrieved context used for RAG responses',
                existing_nullable=True)
     op.alter_column('messages', 'retrieved_doc_ids',
-               existing_type=postgresql.JSON(astext_type=sa.Text()),
+               existing_type=sa.JSON(),
+               type_=postgresql.JSON(astext_type=sa.Text()),
                comment='Stores document IDs used in retrieval',
                existing_nullable=True)
     op.drop_index('ix_messages_rag_context', table_name='messages', postgresql_where='(rag_context IS NOT NULL)')
@@ -97,6 +98,7 @@ def downgrade():
     op.create_index('ix_messages_rag_context', 'messages', ['rag_context'], unique=False, postgresql_where='(rag_context IS NOT NULL)')
     op.alter_column('messages', 'retrieved_doc_ids',
                existing_type=postgresql.JSON(astext_type=sa.Text()),
+               type_=sa.JSON(),
                comment=None,
                existing_comment='Stores document IDs used in retrieval',
                existing_nullable=True)
