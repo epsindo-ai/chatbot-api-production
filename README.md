@@ -128,11 +128,12 @@ volumes:
 When the container starts:
 
 1. **Validates** all required environment variables
-2. **Waits** for database to be ready
-3. **Runs** database migrations (Alembic)
-4. **Creates** super admin user from environment
-5. **Initializes** configurations from environment
-6. **Starts** the FastAPI application
+2. **Ensures** Docling models are downloaded (for document processing)
+3. **Waits** for database to be ready
+4. **Runs** database migrations (Alembic)
+5. **Creates** super admin user from environment
+6. **Initializes** configurations from environment
+7. **Starts** the FastAPI application
 
 ## 🛠️ Management
 

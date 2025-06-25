@@ -6,10 +6,10 @@ Complete guide for deploying the LLM Chatbot API Docker image.
 
 ```bash
 # Build the image
-docker build -t llm-chatbot-api .
+docker build -t llm-chatbot-api:latest .
 
 # Tag for your registry
-docker tag llm-chatbot-api your-registry/llm-chatbot-api:latest
+docker tag llm-chatbot-api:latest your-registry/llm-chatbot-api:latest
 
 # Push to registry
 docker push your-registry/llm-chatbot-api:latest
@@ -177,6 +177,8 @@ curl http://localhost:35430/docs
 
 ### Super Admin Password Reset
 
+**Note**: Super admin is automatically created during FastAPI application startup using the environment variables (`SUPER_ADMIN_USERNAME`, `SUPER_ADMIN_PASSWORD`, `SUPER_ADMIN_EMAIL`). If you need to reset or manage the super admin after initial deployment:
+
 ```bash
 # Interactive reset
 docker exec -it llm-chatbot-api /app/reset-super-admin.sh
@@ -220,7 +222,16 @@ docker exec -it postgres-container pg_isready -U username
 
 ## 📊 Monitoring
 
-The container includes health checks:
+## 🐳 What the Image Contains
+
+- ✅ FastAPI application with all dependencies
+- ✅ Pre-downloaded Docling models (for document processing) - uses `docling-tools models download`
+- ✅ Automatic database migration (Alembic)
+- ✅ Super admin management scripts
+- ✅ Health checks and monitoring
+- ✅ Non-root user security
+- ✅ Environment validation
+- ✅ Fallback model download if pre-download failed
 - **Health endpoint**: `http://localhost:35430/health`
 - **API documentation**: `http://localhost:35430/docs`
 - **Container health**: `docker ps` shows health status
@@ -272,8 +283,9 @@ MINIO_ENDPOINT=minio:9000  # or your MinIO host
 The Docker container automatically handles:
 1. **Database Connection Wait** - Waits for PostgreSQL to be ready
 2. **Alembic Migrations** - Runs `alembic upgrade head` automatically
-3. **Super Admin Creation** - Initializes super admin from environment variables
-4. **Service Start** - Starts the FastAPI application
+3. **Super Admin Creation** - Initializes super admin from environment variables via FastAPI startup
+4. **Default Configs** - Sets up default application configurations
+5. **Service Start** - Starts the FastAPI application
 
 ### 5. Database Migration Management
 

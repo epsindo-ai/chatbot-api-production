@@ -44,6 +44,19 @@ echo "🔍 Checking environment variables..."
 check_required_env
 echo "✅ Environment variables validated!"
 
+# Ensure Docling models are available
+echo "🤖 Checking Docling models..."
+if [ ! -d "$HOME/.cache/docling/models" ] || [ -z "$(ls -A $HOME/.cache/docling/models 2>/dev/null)" ]; then
+    echo "📥 Downloading Docling models on first run..."
+    if docling-tools models download; then
+        echo "✅ Docling models downloaded successfully"
+    else
+        echo "⚠️ Could not download models. Docling may download models on first document processing"
+    fi
+else
+    echo "✅ Docling models already available"
+fi
+
 # Wait for database to be ready
 echo "⏳ Waiting for database to be ready..."
 while ! nc -z ${POSTGRES_HOST:-postgres} ${POSTGRES_PORT:-5432}; do

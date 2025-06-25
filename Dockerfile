@@ -27,15 +27,21 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
+# Pre-download Docling models using the CLI tool
+RUN docling-tools models download
+
 # Copy the application code
 COPY . .
+
+# Set script permissions before switching to non-root user
+RUN chmod +x /app/docker-entrypoint.sh /app/reset-super-admin.sh
 
 # Create a non-root user for security
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
 # Create necessary directories and set permissions
-RUN mkdir -p /app/logs && \
-    chown -R appuser:appuser /app
+RUN mkdir -p /app/logs /home/appuser/.cache/docling/models && \
+    chown -R appuser:appuser /app /home/appuser
 
 # Switch to non-root user
 USER appuser
@@ -46,11 +52,6 @@ EXPOSE 35430
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:35430/health || exit 1
-
-# Create entrypoint script
-COPY docker-entrypoint.sh /app/docker-entrypoint.sh
-COPY reset-super-admin.sh /app/reset-super-admin.sh
-RUN chmod +x /app/docker-entrypoint.sh /app/reset-super-admin.sh
 
 # Command to run the application
 CMD ["/app/docker-entrypoint.sh"]
