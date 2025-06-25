@@ -1,6 +1,17 @@
 # LLM Chatbot API - Docker Image
 
-A secure, production-ready Docker image for the LLM Chatbot API. The image contains no secrets and is configured entirely at runtime.
+A production-ready Docker image for the LLM Chatbot API. The image contains no secrets and is fully configured at runtime via environment variables.
+
+## 🚀 Quick Build
+
+```bash
+# Build the image
+docker build -t llm-chatbot-api .
+
+# Push to your registry
+docker tag llm-chatbot-api your-registry/llm-chatbot-api:latest
+docker push your-registry/llm-chatbot-api:latest
+```
 
 ## 🔐 Security Features
 
@@ -9,57 +20,85 @@ A secure, production-ready Docker image for the LLM Chatbot API. The image conta
 - ✅ **Placeholder detection** - Prevents running with template values
 - ✅ **GitHub-safe** - Image can be pushed to public repositories
 
-## 🚀 Quick Start
+## � Required Environment Variables
 
+### Critical (Must be set)
 ```bash
-# 1. Build or pull the image
-docker build -t llm-chatbot-api .
-
-# 2. Use the sample docker-compose
-cp docker-compose.sample.yml docker-compose.yml
-# Edit and replace ALL placeholder values
-
-# 3. Deploy
-docker-compose up -d
-```
-
-## ⚠️ CRITICAL: Replace ALL Placeholders
-
-The `.env.template` contains placeholders like `__REQUIRED_*__`. You MUST replace ALL of these:
-
-```bash
-# ❌ WRONG - Don't use template values
-SECRET_KEY=__REQUIRED_JWT_SECRET_MINIMUM_32_CHARS__
-
-# ✅ CORRECT - Use real values  
-SECRET_KEY=a1b2c3d4e5f6789012345678901234567890abcdef
-```
-
-## 🔧 Required Environment Variables
-
-### Security (Critical)
-```bash
+# Security
 SECRET_KEY=your_32_character_jwt_secret
-SUPER_ADMIN_USERNAME=your_admin_username
-SUPER_ADMIN_PASSWORD=your_secure_password
-SUPER_ADMIN_EMAIL=admin@yourcompany.com
-```
+SUPER_ADMIN_USERNAME=admin
+SUPER_ADMIN_PASSWORD=secure_password
+SUPER_ADMIN_EMAIL=admin@company.com
 
-### Database (Critical)
-```bash
+# Database
 POSTGRES_HOST=your_postgres_host
 POSTGRES_USER=your_db_user  
 POSTGRES_PASSWORD=your_db_password
 POSTGRES_DB=chatbot
 ```
 
-### External Services
+### Application Settings
 ```bash
+# LLM Configuration
 OPENAI_API_BASE=http://your-llm-server/v1
+LLM_MODEL=your-model-name
+LLM_TEMPERATURE=0.1
+LLM_MAX_TOKENS=2000
+
+# RAG/Vector Database
 MILVUS_URI=http://your-milvus:19530
+DEFAULT_COLLECTION=default_collection
+RETRIEVER_TOP_K=10
+
+# Object Storage
 MINIO_ENDPOINT=your-minio:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=secure_minio_password
+
+# Embeddings
 REMOTE_EMBEDDER_URL=http://your-embedder/embeddings
 ```
+
+## 🐳 What the Image Contains
+
+- ✅ FastAPI application with all dependencies
+- ✅ Automatic database migration (Alembic)
+- ✅ Super admin management scripts
+- ✅ Health checks and monitoring
+- ✅ Non-root user security
+- ✅ Environment validation
+
+## 🔧 Runtime Behavior
+
+When the container starts, it automatically:
+
+1. **Validates** all required environment variables
+2. **Waits** for database to be ready
+3. **Runs** Alembic migrations (`alembic upgrade head`)
+4. **Creates** super admin user from environment variables
+5. **Initializes** default configurations from environment
+6. **Starts** the FastAPI application
+
+## 🛠️ Management Scripts
+
+Available inside the running container:
+
+```bash
+# Reset super admin password
+docker exec -it container-name /app/reset-super-admin.sh
+
+# Check super admin info
+docker exec -it container-name /app/reset-super-admin.sh
+# Choose option 4
+
+# Manual database operations
+docker exec -it container-name python -m alembic current
+docker exec -it container-name python -m alembic history
+```
+
+## 📖 Complete Reference
+
+See `.env.template` for all available environment variables and `docker-compose.sample.yml` for a complete deployment example.
 
 ## 🛠️ Built-in Scripts
 

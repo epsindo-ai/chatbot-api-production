@@ -1,85 +1,239 @@
-# LLM Chatbot API - Docker Deployment Guide
+# Docker Deployment Guide
 
-This guide explains how to deploy the LLM Chatbot API using Docker. The Docker image is built without any environment variables and is configured entirely at runtime.
+Complete guide for deploying the LLM Chatbot API Docker image.
 
-## 🔐 Security Model
-
-- ✅ **No secrets in image** - All sensitive data provided at runtime
-- ✅ **Environment validation** - Container checks for required variables on startup
-- ✅ **Placeholder detection** - Prevents running with template placeholders
-- ✅ **GitHub-safe** - Image can be safely pushed to public repositories
-
-## Prerequisites
-
-- Docker Engine 20.10+
-- Docker Compose v2.0+ (recommended)
-- External services: PostgreSQL, MinIO, Milvus, LLM API, Embeddings API
-
-## Quick Start
-
-### 1. Build or Pull the Docker Image
+## 🏗️ Image Build
 
 ```bash
-# Option A: Build locally
+# Build the image
 docker build -t llm-chatbot-api .
 
-# Option B: Pull from registry (when available)
-docker pull your-registry/llm-chatbot-api:latest
+# Tag for your registry
+docker tag llm-chatbot-api your-registry/llm-chatbot-api:latest
+
+# Push to registry
+docker push your-registry/llm-chatbot-api:latest
 ```
 
-### 2. Configure Environment Variables
+## 🚀 Deployment Options
 
-The image requires all configuration at runtime. Use one of these approaches:
+### Option 1: Docker Compose (Recommended)
 
-#### Option A: Using docker-compose (Recommended)
+Create your `docker-compose.yml`:
 
+```yaml
+version: '3.8'
+services:
+  api:
+    image: your-registry/llm-chatbot-api:latest
+    ports:
+      - "35430:35430"
+    environment:
+      # Security - CHANGE THESE!
+      - SECRET_KEY=generate_with_openssl_rand_hex_32
+      - SUPER_ADMIN_USERNAME=admin
+      - SUPER_ADMIN_PASSWORD=your_secure_password
+      - SUPER_ADMIN_EMAIL=admin@company.com
+      
+      # Database
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=chatbot
+      - POSTGRES_PASSWORD=db_password
+      - POSTGRES_DB=chatbot
+      
+      # LLM Service
+      - OPENAI_API_BASE=http://your-llm-server/v1
+      - LLM_MODEL=your-model-name
+      
+      # Vector Database
+      - MILVUS_URI=http://milvus:19530
+      - DEFAULT_COLLECTION=documents
+      
+      # Object Storage
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minio_password
+    depends_on:
+      - postgres
+      - milvus
+      - minio
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=chatbot
+      - POSTGRES_PASSWORD=db_password
+      - POSTGRES_DB=chatbot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  milvus:
+    image: milvusdb/milvus:latest
+    command: ["milvus", "run", "standalone"]
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "19530:19530"
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minio_password
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+volumes:
+  postgres_data:
+  milvus_data:
+  minio_data:
+```
+
+Deploy:
 ```bash
-# Copy the sample docker-compose file
-cp docker-compose.sample.yml docker-compose.yml
-
-# Edit docker-compose.yml and replace ALL placeholder values:
-# - SECRET_KEY: Generate with: openssl rand -hex 32
-# - All database passwords
-# - Super admin credentials
-# - External service URLs
-
-# Optional: Validate configuration before deploying
-./validate-env.sh
-
-# Deploy
 docker-compose up -d
 ```
 
-#### Option B: Using .env file with docker-compose
-
-```bash
-# Copy the template
-cp .env.template .env
-
-# Edit .env and replace ALL __REQUIRED_*__ placeholders
-# Then reference in docker-compose.yml:
-# env_file:
-#   - .env
-
-docker-compose up -d
-```
-
-#### Option C: Direct docker run
+### Option 2: Docker Run
 
 ```bash
 docker run -d \
   --name llm-chatbot-api \
   -p 35430:35430 \
-  -e SECRET_KEY="your_32_char_jwt_secret" \
-  -e POSTGRES_HOST="your_postgres_host" \
-  -e POSTGRES_USER="your_db_user" \
-  -e POSTGRES_PASSWORD="your_db_password" \
+  -e SECRET_KEY="your_32_char_secret" \
+  -e POSTGRES_HOST="your_db_host" \
+  -e POSTGRES_USER="user" \
+  -e POSTGRES_PASSWORD="password" \
   -e POSTGRES_DB="chatbot" \
   -e SUPER_ADMIN_USERNAME="admin" \
   -e SUPER_ADMIN_PASSWORD="secure_password" \
   -e SUPER_ADMIN_EMAIL="admin@company.com" \
-  # ... add all other required variables
-  llm-chatbot-api:latest
+  -e OPENAI_API_BASE="http://your-llm-server/v1" \
+  -e LLM_MODEL="your-model" \
+  -e MILVUS_URI="http://milvus:19530" \
+  -e MINIO_ENDPOINT="minio:9000" \
+  your-registry/llm-chatbot-api:latest
+```
+
+## 🔧 Configuration
+
+### Required Environment Variables
+
+**Security:**
+```bash
+SECRET_KEY=32_character_jwt_secret
+SUPER_ADMIN_USERNAME=admin
+SUPER_ADMIN_PASSWORD=secure_password
+SUPER_ADMIN_EMAIL=admin@company.com
+```
+
+**Database:**
+```bash
+POSTGRES_HOST=postgres_host
+POSTGRES_USER=db_user
+POSTGRES_PASSWORD=db_password
+POSTGRES_DB=chatbot
+```
+
+**External Services:**
+```bash
+OPENAI_API_BASE=http://llm-server/v1
+LLM_MODEL=model-name
+MILVUS_URI=http://milvus:19530
+MINIO_ENDPOINT=minio:9000
+REMOTE_EMBEDDER_URL=http://embedder/embeddings
+```
+
+### Generate JWT Secret
+```bash
+openssl rand -hex 32
+```
+
+## 🔍 Verification
+
+```bash
+# Check container health
+docker ps
+curl http://localhost:35430/health
+
+# View logs
+docker logs llm-chatbot-api
+
+# Access API docs
+curl http://localhost:35430/docs
+```
+
+## 🛠️ Management
+
+### Super Admin Password Reset
+
+```bash
+# Interactive reset
+docker exec -it llm-chatbot-api /app/reset-super-admin.sh
+
+# Direct password reset
+docker exec -it llm-chatbot-api python /app/app/scripts/recreate_super_admin.py --reset-password
+```
+
+### Database Operations
+
+```bash
+# Check migration status
+docker exec -it llm-chatbot-api python -m alembic current
+
+# View migration history
+docker exec -it llm-chatbot-api python -m alembic history
+
+# Manual upgrade (usually not needed)
+docker exec -it llm-chatbot-api python -m alembic upgrade head
+```
+
+## 🚨 Troubleshooting
+
+### Container Won't Start
+```bash
+# Check logs for environment variable errors
+docker logs llm-chatbot-api
+
+# Verify all required variables are set
+docker exec -it llm-chatbot-api env | grep -E "(SECRET_KEY|POSTGRES_|SUPER_ADMIN_)"
+```
+
+### Database Connection Issues
+```bash
+# Test database connectivity
+docker exec -it llm-chatbot-api nc -z $POSTGRES_HOST $POSTGRES_PORT
+
+# Check database credentials
+docker exec -it postgres-container pg_isready -U username
+```
+
+## 📊 Monitoring
+
+The container includes health checks:
+- **Health endpoint**: `http://localhost:35430/health`
+- **API documentation**: `http://localhost:35430/docs`
+- **Container health**: `docker ps` shows health status
+
+## 🔄 Updates
+
+```bash
+# Pull latest image
+docker pull your-registry/llm-chatbot-api:latest
+
+# Restart with new image
+docker-compose pull api
+docker-compose up -d api
 ```
 
 ### 3. Environment Variables Configuration
