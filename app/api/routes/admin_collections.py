@@ -20,7 +20,6 @@ router = APIRouter(
 
 # Initialize services
 vector_store_manager = RemoteVectorStoreManager(
-    embedding_url=settings.REMOTE_EMBEDDER_URL,
     milvus_uri=settings.MILVUS_URI
 )
 ingestion_service = DocumentIngestionService()

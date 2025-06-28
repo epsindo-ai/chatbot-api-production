@@ -7,6 +7,8 @@ import json
 import logging
 import numpy as np
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 class InfinityEmbedder(Embeddings):
@@ -16,8 +18,8 @@ class InfinityEmbedder(Embeddings):
     """
     
     def __init__(self, 
-                 model: str = "stella-en-1.5B", 
-                 infinity_api_url: str = "http://192.168.1.10:33325",
+                 model: str = None, 
+                 infinity_api_url: str = None,
                  batch_size: int = 32,
                  retry_count: int = 3,
                  timeout: int = 60):
@@ -25,14 +27,14 @@ class InfinityEmbedder(Embeddings):
         Initialize the Infinity Embedder.
         
         Args:
-            model: Model name to use for embeddings
-            infinity_api_url: URL of the Infinity API server
+            model: Model name to use for embeddings (defaults to settings.INFINITY_EMBEDDINGS_MODEL)
+            infinity_api_url: URL of the Infinity API server (defaults to settings.INFINITY_API_URL)
             batch_size: Number of texts to embed in a single request
             retry_count: Number of retries for failed requests
             timeout: Request timeout in seconds
         """
-        self.model = model
-        self.api_url = infinity_api_url
+        self.model = model or settings.INFINITY_EMBEDDINGS_MODEL
+        self.api_url = infinity_api_url or settings.INFINITY_API_URL
         self.batch_size = batch_size
         self.retry_count = retry_count
         self.timeout = timeout

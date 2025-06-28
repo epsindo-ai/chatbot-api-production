@@ -49,12 +49,6 @@ class Settings(BaseModel):
     DEFAULT_COLLECTION: str = os.getenv("DEFAULT_COLLECTION", "default_collection") 
     RETRIEVER_TOP_K: int = int(os.getenv("RETRIEVER_TOP_K", "10"))
     
-    # Derived from INFINITY_API_URL for backward compatibility
-    @property
-    def REMOTE_EMBEDDER_URL(self) -> str:
-        """Derive remote embedder URL from Infinity API URL"""
-        return os.getenv("REMOTE_EMBEDDER_URL", f"{self.INFINITY_API_URL}/embeddings")
-    
     # Docling Settings
     DOCLING_PARSER_PATH: str = os.getenv("DOCLING_PARSER_PATH", "/app/.cache/docling/models")
     DOCLING_EMBED_MODEL: str = os.getenv("DOCLING_EMBED_MODEL", "/app/stella-embed-tokenizer")

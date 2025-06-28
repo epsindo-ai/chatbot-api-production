@@ -31,11 +31,8 @@ class DocumentIngestionService:
         # STEP 1: Initialize embeddings
         logger.info("STEP 1: Initializing Infinity embedder")
         try:
-            self.embeddings = InfinityEmbedder(
-                model=settings.INFINITY_EMBEDDINGS_MODEL,
-                infinity_api_url=settings.INFINITY_API_URL
-            )
-            logger.info(f"Embedder initialized with model: {settings.INFINITY_EMBEDDINGS_MODEL}")
+            self.embeddings = InfinityEmbedder()
+            logger.info(f"Embedder initialized with model: {self.embeddings.model}")
         except Exception as e:
             logger.error(f"Failed to initialize embedder: {e}", exc_info=True)
             raise
@@ -57,7 +54,6 @@ class DocumentIngestionService:
         logger.info("STEP 3: Initializing vector store manager")
         try:
             self.vectorstore_manager = RemoteVectorStoreManager(
-                settings.REMOTE_EMBEDDER_URL,
                 settings.MILVUS_URI
             )
             logger.info(f"Vector store manager initialized with URI: {settings.MILVUS_URI}")

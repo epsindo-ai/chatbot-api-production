@@ -14,7 +14,6 @@ router = APIRouter()
 
 # Initialize the RAG service
 rag_service = RagChatService(
-    embedding_url=settings.REMOTE_EMBEDDER_URL,
     milvus_uri=settings.MILVUS_URI
 )
 

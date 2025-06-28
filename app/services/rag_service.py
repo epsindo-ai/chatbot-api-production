@@ -26,7 +26,6 @@ from app.db.database import get_db
 from app.config import settings
 from app.services.message_history import CustomMessageHistory
 from app.services.rag_config_service import RAGConfigService
-from app.utils.embeddings import RemoteEmbedder
 from app.utils.infinity_embedder import InfinityEmbedder
 from app.utils.string_utils import sanitize_collection_name, conversation_collection_name
 from app.services.llm_service import get_streaming_llm_response
@@ -45,19 +44,9 @@ Be concise, accurate, and helpful in your response.
 class RemoteVectorStoreManager:
     """Manages connection to a remote Milvus vector database."""
     
-    def __init__(self, embedding_url: str, milvus_uri: str):
-        # Keep legacy support for RemoteEmbedder for backward compatibility
-        # but it will not be used by default
-        self.remote_embedder = RemoteEmbedder(embedding_url)
-        
+    def __init__(self, milvus_uri: str):
         # Use InfinityEmbeddings as the primary embedder
-        self.infinity_embedder = InfinityEmbedder(
-            model=settings.INFINITY_EMBEDDINGS_MODEL,
-            infinity_api_url=settings.INFINITY_API_URL,
-            batch_size=32,
-            retry_count=3,
-            timeout=60
-        )
+        self.infinity_embedder = InfinityEmbedder()
         
         self.milvus_uri = milvus_uri
         self.vectorstore = None
@@ -139,15 +128,11 @@ class RemoteVectorStoreManager:
 class RagChatService:
     """Service for RAG-based chat using LangChain and PostgreSQL."""
     
-    def __init__(self, embedding_url: str = None, milvus_uri: str = None):
+    def __init__(self, milvus_uri: str = None):
         """Initialize the RAG chat service."""
         self.milvus_uri = milvus_uri or settings.MILVUS_URI
-        self.embeddings = InfinityEmbedder(
-            model=settings.INFINITY_EMBEDDINGS_MODEL,
-            infinity_api_url=embedding_url or settings.INFINITY_API_URL
-        )
+        self.embeddings = InfinityEmbedder()
         self.vectorstore_manager = RemoteVectorStoreManager(
-            embedding_url=embedding_url or settings.REMOTE_EMBEDDER_URL,
             milvus_uri=self.milvus_uri
         )
     

@@ -96,12 +96,10 @@ manager = ConnectionManager()
 
 # Initialize services
 rag_service = RagChatService(
-    embedding_url=settings.REMOTE_EMBEDDER_URL,
     milvus_uri=settings.MILVUS_URI
 )
 minio_service = MinioService()
 vector_store_manager = RemoteVectorStoreManager(
-    embedding_url=settings.REMOTE_EMBEDDER_URL,
     milvus_uri=settings.MILVUS_URI
 )
 ingestion_service = DocumentIngestionService()
@@ -1795,7 +1793,6 @@ async def initiate_with_global_collection(
             from app.utils.string_utils import sanitize_collection_name
             
             vector_store_manager = RemoteVectorStoreManager(
-                embedding_url=settings.REMOTE_EMBEDDER_URL,
                 milvus_uri=settings.MILVUS_URI
             )
             
@@ -1992,7 +1989,6 @@ async def debug_check_file_vectors(
         # Get collection info from Milvus
         from app.services.rag_service import RemoteVectorStoreManager
         vector_store_manager = RemoteVectorStoreManager(
-            embedding_url=settings.REMOTE_EMBEDDER_URL,
             milvus_uri=settings.MILVUS_URI
         )
         
