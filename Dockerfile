@@ -8,7 +8,8 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    XDG_CACHE_HOME=/app/.cache
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -27,9 +28,6 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
-# Pre-download Docling models using the CLI tool
-RUN docling-tools models download
-
 # Copy the application code
 COPY . .
 
@@ -37,11 +35,22 @@ COPY . .
 RUN chmod +x /app/docker-entrypoint.sh /app/reset-super-admin.sh
 
 # Create a non-root user for security
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+RUN groupadd -r appuser && useradd -r -g appuser appuser -m
 
 # Create necessary directories and set permissions
-RUN mkdir -p /app/logs /home/appuser/.cache/docling/models && \
-    chown -R appuser:appuser /app /home/appuser
+RUN mkdir -p /app/logs /app/.cache/docling/models /home/appuser && \
+    chown -R appuser:appuser /app /home/appuser && \
+    chown -R appuser:appuser /app/.cache
+
+# Pre-download Docling models to the shared cache directory
+RUN export XDG_CACHE_HOME=/app/.cache && \
+    export HOME=/app && \
+    docling-tools models download && \
+    chown -R appuser:appuser /app/.cache
+
+# Also create a symlink from root cache to app cache to handle any hardcoded paths
+RUN mkdir -p /root/.cache && \
+    ln -sf /app/.cache/docling /root/.cache/docling
 
 # Switch to non-root user
 USER appuser

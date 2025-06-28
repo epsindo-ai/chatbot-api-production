@@ -39,19 +39,24 @@ class Settings(BaseModel):
     MINIO_DEFAULT_BUCKET: str = os.getenv("MINIO_DEFAULT_BUCKET", "documents")
     MINIO_SECURE: bool = os.getenv("MINIO_SECURE", "False").lower() == "true"
     
-    # RAG Settings
-    REMOTE_EMBEDDER_URL: str = os.getenv("REMOTE_EMBEDDER_URL", "http://192.168.1.10:33325/embeddings")
-    MILVUS_URI: str = os.getenv("MILVUS_URI", "http://localhost:19530")
-    DEFAULT_COLLECTION: str = os.getenv("DEFAULT_COLLECTION", "default_collection") 
-    RETRIEVER_TOP_K: int = int(os.getenv("RETRIEVER_TOP_K", "10"))
-    
-    # Infinity Embeddings Settings
+    # Infinity Embeddings Settings  
     INFINITY_EMBEDDINGS_MODEL: str = os.getenv("INFINITY_EMBEDDINGS_MODEL", "stella-en-1.5B")
     INFINITY_API_URL: str = os.getenv("INFINITY_API_URL", "http://192.168.1.10:33325")
     USE_INFINITY_EMBEDDINGS: bool = os.getenv("USE_INFINITY_EMBEDDINGS", "True").lower() == "true"
     
+    # RAG Settings
+    MILVUS_URI: str = os.getenv("MILVUS_URI", "http://localhost:19530")
+    DEFAULT_COLLECTION: str = os.getenv("DEFAULT_COLLECTION", "default_collection") 
+    RETRIEVER_TOP_K: int = int(os.getenv("RETRIEVER_TOP_K", "10"))
+    
+    # Derived from INFINITY_API_URL for backward compatibility
+    @property
+    def REMOTE_EMBEDDER_URL(self) -> str:
+        """Derive remote embedder URL from Infinity API URL"""
+        return os.getenv("REMOTE_EMBEDDER_URL", f"{self.INFINITY_API_URL}/embeddings")
+    
     # Docling Settings
-    DOCLING_PARSER_PATH: str = os.getenv("DOCLING_PARSER_PATH", "/root/.cache/docling/models")
+    DOCLING_PARSER_PATH: str = os.getenv("DOCLING_PARSER_PATH", "/app/.cache/docling/models")
     DOCLING_EMBED_MODEL: str = os.getenv("DOCLING_EMBED_MODEL", "/app/stella-embed-tokenizer")
     DOCLING_USE_GPU: bool = os.getenv("DOCLING_USE_GPU", "True").lower() == "true"
     

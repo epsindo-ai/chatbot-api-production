@@ -3,6 +3,9 @@ set -e
 
 echo "🚀 Starting LLM Chatbot API..."
 
+# Set cache directory for Docling models to avoid permission issues
+export XDG_CACHE_HOME=/app/.cache
+
 # Function to check required environment variables
 check_required_env() {
     local missing_vars=()
@@ -46,15 +49,19 @@ echo "✅ Environment variables validated!"
 
 # Ensure Docling models are available
 echo "🤖 Checking Docling models..."
-if [ ! -d "$HOME/.cache/docling/models" ] || [ -z "$(ls -A $HOME/.cache/docling/models 2>/dev/null)" ]; then
-    echo "📥 Downloading Docling models on first run..."
+# Check both possible locations where models might be
+if [ -d "/app/.cache/docling/models" ] && [ -n "$(ls -A /app/.cache/docling/models 2>/dev/null)" ]; then
+    echo "✅ Docling models found in /app/.cache/docling/models"
+elif [ -d "/root/.cache/docling/models" ] && [ -n "$(ls -A /root/.cache/docling/models 2>/dev/null)" ]; then
+    echo "✅ Docling models found in /root/.cache/docling/models"
+else
+    echo "⚠️  Docling models not found in expected locations"
+    echo "📥 Downloading models as fallback..."
     if docling-tools models download; then
         echo "✅ Docling models downloaded successfully"
     else
-        echo "⚠️ Could not download models. Docling may download models on first document processing"
+        echo "❌ Failed to download models. Document processing may fail."
     fi
-else
-    echo "✅ Docling models already available"
 fi
 
 # Wait for database to be ready
