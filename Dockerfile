@@ -28,6 +28,9 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
+# Pre-download Docling models as root first
+RUN docling-tools models download
+
 # Copy the application code
 COPY . .
 
@@ -41,16 +44,6 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser -m
 RUN mkdir -p /app/logs /app/.cache/docling/models /home/appuser && \
     chown -R appuser:appuser /app /home/appuser && \
     chown -R appuser:appuser /app/.cache
-
-# Pre-download Docling models to the shared cache directory
-RUN export XDG_CACHE_HOME=/app/.cache && \
-    export HOME=/app && \
-    docling-tools models download && \
-    chown -R appuser:appuser /app/.cache
-
-# Also create a symlink from root cache to app cache to handle any hardcoded paths
-RUN mkdir -p /root/.cache && \
-    ln -sf /app/.cache/docling /root/.cache/docling
 
 # Switch to non-root user
 USER appuser
