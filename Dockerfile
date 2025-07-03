@@ -28,9 +28,6 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
-# Pre-download Docling models as root first
-RUN docling-tools models download
-
 # Copy the application code
 COPY . .
 
@@ -41,12 +38,19 @@ RUN chmod +x /app/docker-entrypoint.sh /app/reset-super-admin.sh
 RUN groupadd -r appuser && useradd -r -g appuser appuser -m
 
 # Create necessary directories and set permissions
-RUN mkdir -p /app/logs /app/.cache/docling/models /home/appuser && \
-    chown -R appuser:appuser /app /home/appuser && \
-    chown -R appuser:appuser /app/.cache
+RUN mkdir -p /app/logs /app/.cache/docling/models /home/appuser /opt/docling-models && \
+    chown -R appuser:appuser /app /home/appuser /opt/docling-models
 
 # Switch to non-root user
 USER appuser
+
+# Pre-download Docling models to a permanent location
+# Download models to /opt/docling-models which won't be affected by volume mounts
+RUN mkdir -p /opt/docling-models/docling/models && \
+    docling-tools models download --output-dir /opt/docling-models/docling/models && \
+    echo "Models downloaded to /opt/docling-models/docling/models" && \
+    find /opt/docling-models -type f | head -10 && \
+    echo "Total model files: $(find /opt/docling-models -type f | wc -l)"
 
 # Expose the port the app runs on
 EXPOSE 35430

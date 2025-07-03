@@ -47,17 +47,50 @@ echo "🔍 Checking environment variables..."
 check_required_env
 echo "✅ Environment variables validated!"
 
-# Ensure Docling models are available
-echo "🤖 Checking Docling models..."
-if [ ! -d "$HOME/.cache/docling/models" ] || [ -z "$(ls -A $HOME/.cache/docling/models 2>/dev/null)" ]; then
-    echo "📥 Downloading Docling models on first run..."
-    if docling-tools models download; then
-        echo "✅ Docling models downloaded successfully"
+# Setup Docling models
+echo "🤖 Setting up Docling models..."
+echo "Cache directory: $XDG_CACHE_HOME"
+echo "Models directory: $XDG_CACHE_HOME/docling/models"
+
+# Create cache directory if it doesn't exist
+mkdir -p "$XDG_CACHE_HOME/docling/models"
+
+# Check if models exist in permanent location
+if [ -d "/opt/docling-models/docling/models" ] && [ "$(find /opt/docling-models/docling/models -type f 2>/dev/null | wc -l)" -gt 0 ]; then
+    echo "📥 Copying models from permanent location..."
+    # Use rsync-style copying to preserve directory structure
+    (cd /opt/docling-models/docling/models && find . -type d -exec mkdir -p "$XDG_CACHE_HOME/docling/models/{}" \;)
+    (cd /opt/docling-models/docling/models && find . -type f -exec cp {} "$XDG_CACHE_HOME/docling/models/{}" \;)
+    echo "✅ Models copy completed"
+    echo "Total files in cache: $(find $XDG_CACHE_HOME/docling/models -type f 2>/dev/null | wc -l)"
+    
+    # Verify specific EasyOcr model exists
+    if [ -f "$XDG_CACHE_HOME/docling/models/EasyOcr/craft_mlt_25k.pth" ]; then
+        echo "✅ EasyOcr craft_mlt_25k.pth model found"
     else
-        echo "⚠️ Could not download models. Docling may download models on first document processing"
+        echo "⚠️ Warning: EasyOcr craft_mlt_25k.pth model not found in expected location"
+        echo "Available files in EasyOcr directory:"
+        ls -la "$XDG_CACHE_HOME/docling/models/EasyOcr/" 2>/dev/null || echo "EasyOcr directory not found"
+        echo "Directory structure:"
+        find "$XDG_CACHE_HOME/docling/models" -type d | head -10
     fi
 else
-    echo "✅ Docling models already available"
+    echo "📥 Downloading models (not found in permanent location)..."
+    if docling-tools models download; then
+        echo "✅ Models downloaded successfully"
+    else
+        echo "❌ Failed to download models - continuing with potential on-demand download"
+    fi
+fi
+
+# Verify models are available
+if [ -d "$XDG_CACHE_HOME/docling/models" ] && [ "$(find $XDG_CACHE_HOME/docling/models -type f 2>/dev/null | wc -l)" -gt 0 ]; then
+    echo "✅ Docling models are ready ($(find $XDG_CACHE_HOME/docling/models -type f | wc -l) files)"
+    echo "Sample model files:"
+    find $XDG_CACHE_HOME/docling/models -name "*.pth" -o -name "*.bin" -o -name "*.safetensors" | head -3
+else
+    echo "⚠️ Warning: No models found in cache directory"
+    echo "Models will be downloaded on first document processing"
 fi
 
 # Wait for database to be ready
@@ -81,4 +114,4 @@ fi
 
 # Start the application
 echo "🎯 Starting FastAPI application..."
-exec python -m uvicorn app.main:app --host 0.0.0.0 --port 35430 --workers 1
+exec python -m uvicorn app.main:app --host 0.0.0.0 --port 35430 --workers 5
