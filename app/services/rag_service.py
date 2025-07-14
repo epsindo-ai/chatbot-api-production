@@ -614,8 +614,7 @@ class RagChatService:
             prompt = ChatPromptTemplate.from_messages([
                 ("system", system_prompt),
                 MessagesPlaceholder(variable_name="chat_history"),
-                ("human", "{input}"),
-                ("human", "Context: {context}")
+                ("human", "Context: {context}\n\nQuestion: {input}")
             ])
             
             # Create document chain
@@ -829,12 +828,11 @@ class RagChatService:
                 print("DEBUG STREAMING: No context retrieved!")
             
             # Create prompt with appropriate system prompt based on collection type
-            base_system_prompt = self._get_rag_system_prompt(db, safe_collection_name)
+            system_prompt = self._get_rag_system_prompt(db, safe_collection_name)
             prompt = ChatPromptTemplate.from_messages([
-                ("system", f"{base_system_prompt} Always cite the document source when referring to specific information."),
-                ("system", "Context information is below.\n{context}"),
-                ("system", "Previous conversation history:\n{chat_history}"),
-                ("human", "{input}")
+                ("system", system_prompt),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "Context: {context}\n\nQuestion: {input}")
             ])
             
             # Create chat model using the get_llm method (disable thinking for efficiency)
